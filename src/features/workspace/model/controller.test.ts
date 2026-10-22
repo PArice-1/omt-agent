@@ -38,6 +38,48 @@ describe("workspace controller", () => {
     expect(await controller.connect("short")).toBe(false);
     expect(api.listSessions).not.toHaveBeenCalled();
   });
+  it("separates credential validation from the latest request failure and recovers on an explicit read", async () => {
+    const { api, controller, getToken } = await connected();
+    api.listSessions.mockRejectedValueOnce(new ApiError(502, "proxy_unavailable", "legacy execution warning"));
+    expect(await controller.refreshSessions()).toBe(false);
+    expect(controller.getSnapshot()).toMatchObject({ connection: "connected", backendStatus: "unavailable", noticeSource: "sessions" });
+    expect(getToken()).toBe(testToken);
+    expect(controller.getSnapshot().notice).not.toContain("legacy execution warning");
+    expect(await controller.refreshSessions()).toBe(true);
+    expect(controller.getSnapshot().backendStatus).toBe("available");
+    expect(controller.getSnapshot().notice).toBeUndefined();
+    expect(api.run).not.toHaveBeenCalled();
+  });
+  it("does not let an older history success hide a newer list request failure", async () => {
+    const { api, controller } = await connected();
+    const pending = deferred<MessageResponse[]>();
+    api.getMessages.mockReturnValueOnce(pending.promise);
+    const historyRead = controller.loadHistory("session-a");
+    api.listSessions.mockRejectedValueOnce(new TypeError("network"));
+    await controller.refreshSessions();
+    pending.resolve(history);
+    await historyRead;
+    expect(controller.getSnapshot().backendStatus).toBe("unavailable");
+    await controller.refreshSessions();
+    expect(controller.getSnapshot().backendStatus).toBe("available");
+  });
+  it("does not unlock an uncertain execution when closing a notification", async () => {
+    const { api, controller } = await connected();
+    api.run.mockRejectedValue(new TypeError("network"));
+    await controller.send("session-a", "分析项目");
+    controller.dismissNotice();
+    expect(controller.getSnapshot().runs["session-a"].phase).toBe("unknown");
+    expect(controller.getSnapshot().backendStatus).toBe("unavailable");
+    expect(await controller.send("session-a", "重复")).toBe(false);
+    expect(api.run).toHaveBeenCalledTimes(1);
+  });
+  it("does not call a busy business response a lost connection", async () => {
+    const { api, controller } = await connected();
+    api.run.mockRejectedValue(new ApiError(429, "capacity_exceeded", "容量已满"));
+    await controller.send("session-a", "分析项目");
+    expect(controller.getSnapshot().backendStatus).toBe("available");
+    expect(controller.getSnapshot().runs["session-a"].phase).toBe("rejected");
+  });
   it("does not retry failed authentication", async () => {
     const { api, controller, getToken } = setup();
     api.listSessions.mockRejectedValue(new ApiError(401, "unauthorized", "无权限"));

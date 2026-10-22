@@ -1,10 +1,11 @@
 "use client";
-import { useEffect, useId, useRef } from "react";
+import { useId } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Bot, ChevronDown, LoaderCircle, Terminal, User } from "lucide-react";
 import type { MessageResponse } from "@/lib/omt-api/contracts";
 import type { RunState } from "../model/types";
+import { useMessageScroll } from "../hooks/use-message-scroll";
 
 function Markdown({ text }: { text: string }) {
   return <div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml components={{
@@ -15,22 +16,14 @@ function Markdown({ text }: { text: string }) {
 
 export function Messages({ messages, run }: { messages: MessageResponse[]; run?: RunState }) {
   const prefix = useId();
-  const end = useRef<HTMLDivElement>(null);
-  const root = useRef<HTMLDivElement>(null);
-  const shouldScroll = useRef(true);
+  const { root, content, onScroll } = useMessageScroll(messages, run);
   const targets = new Map<string, string>();
   messages.forEach((message, index) => message.tool_calls.forEach((call, callIndex) => {
     if (call.id && !targets.has(call.id)) targets.set(call.id, `${prefix}-call-${index}-${callIndex}`);
   }));
-  useEffect(() => {
-    if (shouldScroll.current) end.current?.scrollIntoView?.({ block: "end", behavior: "instant" });
-  }, [messages, run]);
   const provisional = run?.message !== undefined && ["sending", "completed", "unknown"].includes(run.phase);
-  return <div className="message-scroll" ref={root} onScroll={() => {
-    const node = root.current;
-    if (node) shouldScroll.current = node.scrollHeight - node.scrollTop - node.clientHeight < 140;
-  }}>
-    <div className="message-content">
+  return <div className="message-scroll" ref={root} onScroll={onScroll}>
+    <div className="message-content" ref={content}>
       {messages.map((message, index) => <article key={index} className={`message message-${message.role}`}>
         <div className="message-avatar" aria-hidden="true">{message.role === "user" ? <User size={17} /> : message.role === "tool" ? <Terminal size={16} /> : <Bot size={18} />}</div>
         <div className="message-body"><div className="message-author">{message.role === "user" ? "你" : message.role === "tool" ? message.name || "工具结果" : "OMT"}{message.role === "tool" && message.status && <span className={`tool-status ${message.status}`}>{message.status === "success" ? "工具返回成功" : "工具返回错误"}</span>}</div>
@@ -46,8 +39,7 @@ export function Messages({ messages, run }: { messages: MessageResponse[]; run?:
       </article>)}
       {provisional && <article className="message message-user provisional"><div className="message-avatar"><User size={17} /></div><div className="message-body"><div className="message-author">你 <span className="provisional-label">{run.phase === "unknown" ? "结果待确认 · 本地输入" : "本轮输入"}</span></div><p className="user-text">{run.message}</p></div></article>}
       {run?.phase === "sending" && <div className="execution-wait" role="status"><span className="waiting-orbit"><LoaderCircle size={18} className="spin" /></span><div><strong>OMT 正在执行</strong><p>等待本轮最终结果，工具记录将在完成后加载。</p></div></div>}
-      {run?.phase === "completed" && run.answer !== undefined && <article className="message message-assistant"><div className="message-avatar"><Bot size={18} /></div><div className="message-body"><div className="message-author">OMT <span className="provisional-label">本轮已完成 · 等待历史同步</span></div>{run.answer ? <Markdown text={run.answer} /> : <p className="subtle">本轮回答为空，请查看完整历史。</p>}</div></article>}
-      <div ref={end} />
+      {run?.phase === "completed" && run.answer !== undefined && <article className="message message-assistant"><div className="message-avatar"><Bot size={18} /></div><div className="message-body"><div className="message-author">OMT <span className="provisional-label">正在同步历史</span></div>{run.answer ? <Markdown text={run.answer} /> : <p className="subtle">本轮回答为空，请查看完整历史。</p>}</div></article>}
     </div>
   </div>;
 }

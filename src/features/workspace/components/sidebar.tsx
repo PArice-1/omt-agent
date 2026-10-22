@@ -12,6 +12,7 @@ interface Props {
 }
 export function Sidebar({ state, expanded, onNew, onSelect, onRefresh, onConnection }: Props) {
   const connected = state.connection === "connected";
+  const connectionIssue = connected && state.backendStatus === "unavailable";
   const locked = state.creating || state.refreshing || Object.values(state.runs).some((run) => ["sending", "unknown"].includes(run.phase));
   return <aside id="session-sidebar" className={`sidebar ${expanded ? "is-expanded" : ""}`} aria-label="会话导航">
     <div className="brand" aria-label="OMT"><span className="brand-mark"><Sparkles size={23} /></span><span>omt<span className="brand-period">.</span></span><span className="brand-caption">workspace</span></div>
@@ -31,7 +32,7 @@ export function Sidebar({ state, expanded, onNew, onSelect, onRefresh, onConnect
     </nav>
     <div className="sidebar-footer">
       <div className="local-note"><span className="local-note-icon"><Check size={15} /></span><div><strong>只属于你的空间</strong><span>本机运行 · 历史由后端保存</span></div></div>
-      <button className="connection-button" onClick={onConnection}><span className={`status-dot ${connected ? "connected" : ""}`} /><span>{connected ? "本机后端已连接" : "连接本机后端"}</span><ArrowUpRight size={15} /></button>
+      <button className="connection-button" onClick={onConnection}><span className={`status-dot ${connectionIssue ? "issue" : connected ? "connected" : ""}`} /><span>{connectionIssue ? "后端连接待检查" : connected ? "本机后端已连接" : "连接本机后端"}</span><ArrowUpRight size={15} /></button>
     </div>
   </aside>;
 }

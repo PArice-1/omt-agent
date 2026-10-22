@@ -1,14 +1,14 @@
-import { AlertCircle, CheckCircle2, Info, RefreshCw } from "lucide-react";
+import { AlertCircle, Info, RefreshCw } from "lucide-react";
 import type { HistoryState, RunState } from "../model/types";
 
 export function RunNotice({ run, history, onInspect, onAcknowledge }: { run?: RunState; history?: HistoryState; onInspect(): void; onAcknowledge(): void }) {
   if (!run || run.phase === "idle" || run.phase === "sending") return null;
-  if (run.phase === "completed") return <div className="run-notice success-notice" role="status">
-    <CheckCircle2 size={17} /><div><strong>本轮已完成</strong>{run.warnings?.map((warning, index) => <p key={index}>{warning === "session_timestamp_update_failed" ? "会话时间更新失败，但本轮已成功；请勿重复发送。" : warning}</p>)}
-      {run.runId && <span className="run-id">运行 ID：{run.runId}</span>}
-      {history?.status === "error" && <p>执行已成功，但历史刷新失败。下方保留最终回答，重读历史不会重新执行。</p>}
-    </div>
-  </div>;
+  if (run.phase === "completed") {
+    if (!run.warnings?.length) return null;
+    return <div className="run-notice warning-notice" role="status"><Info size={17} />
+      <div><strong>运行提醒</strong>{run.warnings.map((warning, index) => <p key={index}>{warning === "session_timestamp_update_failed" ? "会话时间更新失败，但回答已生成；请勿重复发送。" : warning}</p>)}</div>
+    </div>;
+  }
   const unknown = run.phase === "unknown";
   return <div className={`run-notice ${unknown ? "unknown-notice" : "error-notice"}`} role="alert">
     {unknown ? <Info size={18} /> : <AlertCircle size={18} />}

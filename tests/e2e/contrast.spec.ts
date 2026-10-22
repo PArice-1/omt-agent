@@ -58,11 +58,11 @@ test("welcome, disabled composer and connection dialog keep readable contrast", 
   await expectReadable(page, ".welcome-description, .suggestion-card > span:nth-child(2), .connection-pill, .composer-disclaimer, .composer-bottom > span");
 });
 
-test("session, message, tool and completion text stay readable", async ({ page }) => {
+test("session, message, tool and non-fatal warning text stay readable", async ({ page }) => {
   let completed = false;
   await page.route("**/api/omt/**", (route) => {
     const path = new URL(route.request().url()).pathname;
-    if (path.endsWith("/runs")) { completed = true; return route.fulfill({ json: completedRun }); }
+    if (path.endsWith("/runs")) { completed = true; return route.fulfill({ json: { ...completedRun, warnings: ["session_timestamp_update_failed"] } }); }
     if (path.endsWith("/messages")) return route.fulfill({ json: completed ? history : [] });
     return route.fulfill({ json: [sessionA] });
   });
@@ -75,7 +75,7 @@ test("session, message, tool and completion text stay readable", async ({ page }
   await page.getByRole("textbox", { name: "消息" }).fill("分析项目");
   await page.getByRole("button", { name: "发送消息" }).click();
   await expect(page.getByText("分析完成", { exact: true })).toHaveCount(1);
-  await expectReadable(page, ".success-notice strong, .run-id, .message-author, .user-text, .markdown, .tool-card summary, .tool-call-caption, .tool-status");
+  await expectReadable(page, ".warning-notice strong, .warning-notice p, .message-author, .user-text, .markdown, .tool-card summary, .tool-call-caption, .tool-status");
   await page.getByText("查看工具结果", { exact: true }).click();
   await expectReadable(page, ".tool-detail pre, .tool-reference");
 });

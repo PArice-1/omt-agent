@@ -1,6 +1,6 @@
 "use client";
 import { useState, useSyncExternalStore } from "react";
-import { ArrowUpRight, CircleAlert, Menu, RefreshCw, Sparkles } from "lucide-react";
+import { ArrowUpRight, CircleAlert, Menu, RefreshCw, Sparkles, X } from "lucide-react";
 import { ConnectionDialog } from "@/features/connection/connection-dialog";
 import { WorkspaceController } from "./model/controller";
 import { sessionTitle } from "./model/format";
@@ -21,13 +21,14 @@ export function Workspace({ controller: provided }: { controller?: WorkspaceCont
   const id = state.selectedId;
   const draftKey = id ?? "__new";
   const connected = state.connection === "connected";
+  const connectionIssue = connected && state.backendStatus === "unavailable";
   const selected = state.sessions.find((session) => session.session_id === id);
   const history = id ? state.histories[id] : undefined;
   const run = id ? state.runs[id] : undefined;
   const running = Object.values(state.runs).some((item) => item.phase === "sending");
   const unknown = Object.values(state.runs).some((item) => item.phase === "unknown");
   const disabled = !connected || !id || running || unknown || state.creating || state.refreshing || history?.status !== "ready" || run?.phase === "needs_attention";
-  const hint = !connected ? "连接本机后端后即可开始" : running ? "正在等待最终结果，不会自动重试" : unknown ? "请先检查结果不明的会话" : run?.phase === "needs_attention" ? "当前会话需要人工检查" : !id ? "先新建或选择一个会话" : history?.status === "error" ? "请先重新读取历史" : history?.status === "loading" ? "正在加载历史" : state.refreshing ? "正在刷新会话列表" : "非流式响应 · 完成后展示完整记录";
+  const hint = !connected ? "连接本机后端后即可开始" : running ? "正在等待最终结果，不会自动重试" : unknown ? "请先检查结果不明的会话" : run?.phase === "needs_attention" ? "当前会话需要人工检查" : !id ? "先新建或选择一个会话" : history?.status === "error" ? "请先重新读取历史" : history?.status === "loading" ? "正在加载历史" : state.refreshing ? "正在刷新会话列表" : connectionIssue ? "最近请求异常，可在连接设置中检查" : "非流式响应 · 完成后展示完整记录";
   const hasMessages = Boolean(history?.messages.length || run?.message && ["sending", "completed", "unknown"].includes(run.phase));
   const setDraft = (text: string) => setDrafts((previous) => ({ ...previous, [draftKey]: text }));
 
@@ -39,9 +40,9 @@ export function Workspace({ controller: provided }: { controller?: WorkspaceCont
         <div className="topbar-left"><button className="icon-button mobile-menu" aria-label="展开会话导航" aria-expanded={sidebarExpanded} aria-controls="session-sidebar" onClick={() => setSidebarExpanded(!sidebarExpanded)}><Menu size={20} /></button>
           <span className="workspace-label">工作空间</span><span className="breadcrumb-slash">/</span><span className="current-title">{selected ? sessionTitle(selected.title) : "新的开始"}</span>
         </div>
-        <button className="connection-pill" onClick={() => setConnectionOpen(true)}><span className={`status-dot ${connected ? "connected" : ""}`} />{connected ? "本机已连接" : "未连接"}<ArrowUpRight size={13} /></button>
+        <button className={`connection-pill ${connectionIssue ? "has-issue" : ""}`} title={connectionIssue ? "令牌曾验证通过，但最近请求未取得有效响应；不代表执行已取消。" : connected ? "最近请求已通过，不代表后续请求一定成功。" : "输入访问令牌以连接本机后端"} onClick={() => setConnectionOpen(true)}><span className={`status-dot ${connectionIssue ? "issue" : connected ? "connected" : ""}`} />{connectionIssue ? "连接待检查" : connected ? "本机已连接" : "未连接"}<ArrowUpRight size={13} /></button>
       </header>
-      {(state.notice || state.connectionError && !connectionOpen) && <div className="global-notice" role="alert"><CircleAlert size={17} /><span>{state.notice || state.connectionError}</span>{!connected && <button className="text-button" onClick={() => setConnectionOpen(true)}>重新连接</button>}</div>}
+      {(state.notice || !connected && state.connectionError && !connectionOpen) && <div className="global-notice" role="alert"><CircleAlert size={17} /><span>{state.notice || state.connectionError}</span>{!connected && <button className="text-button" onClick={() => setConnectionOpen(true)}>重新连接</button>}<button type="button" className="icon-button" aria-label="关闭提示" onClick={controller.dismissNotice}><X size={17} /></button></div>}
       <div className="conversation">
         {id && <div className="conversation-toolbar"><span><Sparkles size={14} />{sessionTitle(selected?.title)}</span><button className="text-button" disabled={run?.phase === "sending" || history?.status === "loading"} onClick={() => { void controller.loadHistory(id); }}><RefreshCw size={13} className={history?.status === "loading" ? "spin" : ""} />{history?.status === "loading" ? "正在读取" : "刷新历史"}</button></div>}
         <div className="notice-region"><RunNotice run={run} history={history} onInspect={() => { if (id) void controller.loadHistory(id); }} onAcknowledge={() => { if (id) controller.acknowledgeUnknown(id); }} />
@@ -60,7 +61,7 @@ export function Workspace({ controller: provided }: { controller?: WorkspaceCont
         }} />
       </div>
     </main>
-    {connectionOpen && <ConnectionDialog state={state} busy={running || state.creating} onConnect={async (token) => { const success = await controller.connect(token); if (success) setDrafts({}); return success; }} onDisconnect={() => { const success = controller.disconnect(); if (success) setDrafts({}); return success; }} onClose={() => setConnectionOpen(false)} />}
+    {connectionOpen && <ConnectionDialog state={state} busy={running || state.creating} onConnect={async (token) => { const success = await controller.connect(token); if (success) setDrafts({}); return success; }} onCheck={controller.refreshSessions} onDisconnect={() => { const success = controller.disconnect(); if (success) setDrafts({}); return success; }} onClose={() => setConnectionOpen(false)} />}
     {newOpen && <NewSessionDialog busy={state.creating} error={state.notice} onClose={() => setNewOpen(false)} onCreate={async (title) => {
       const success = await controller.createSession(title);
       const selectedId = controller.getSnapshot().selectedId;

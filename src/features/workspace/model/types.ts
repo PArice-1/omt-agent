@@ -18,6 +18,7 @@ export interface HistoryState {
 export interface WorkspaceState {
   connection: "disconnected" | "connecting" | "connected";
   connectionError?: string;
+  backendStatus: "unknown" | "available" | "unavailable";
   sessions: SessionResponse[];
   selectedId: string | null;
   histories: Record<string, HistoryState>;
@@ -25,4 +26,5 @@ export interface WorkspaceState {
   creating: boolean;
   refreshing: boolean;
   notice?: string;
+  noticeSource?: "sessions" | "create" | "selection" | "input";
 }

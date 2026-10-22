@@ -93,6 +93,18 @@ describe("local allowlisted proxy", () => {
     expect(await response.json()).toMatchObject({ error: { code: "proxy_unavailable" } });
     expect(upstream).toHaveBeenCalledTimes(1);
   });
+  it.each([
+    { method: "GET", path: ["api", "v1", "sessions"], feedback: "本次读取失败" },
+    { method: "POST", path: ["api", "v1", "sessions"], feedback: "会话可能已创建" },
+    { method: "POST", path: ["api", "v1", "sessions", "s", "runs"], feedback: "执行结果可能不明" },
+  ])("explains the failed operation for $method $path without conflating reads with runs", async ({ method, path, feedback }) => {
+    const upstream = vi.fn<Forwarder>().mockRejectedValue(new TypeError("network"));
+    const response = await proxyRequest(request(path.join("/"), method), path, upstream);
+    const body: unknown = await response.json();
+    expect(body).toMatchObject({ error: { code: "proxy_unavailable", message: expect.stringContaining(feedback) } });
+    if (method === "GET") expect(JSON.stringify(body)).not.toContain("执行结果可能不明");
+    expect(upstream).toHaveBeenCalledTimes(1);
+  });
   it("preserves business errors and WWW-Authenticate", async () => {
     const upstream = vi.fn<Forwarder>().mockResolvedValue({ status: 401,
       headers: new Headers({ "www-authenticate": "Bearer" }), text: async () => '{"error":{"code":"unauthorized","message":"no"}}' });

@@ -91,7 +91,8 @@ describe("workspace user flows with the real API client", () => {
     await user.click(screen.getByRole("button", { name: "发送消息" }));
     await waitFor(() => expect(screen.getByText(/历史刷新失败，执行已成功/)).toBeInTheDocument());
     expect(screen.getByText("分析完成")).toBeInTheDocument();
-    expect(screen.getByText("本轮已完成")).toBeInTheDocument();
+    expect(screen.queryByText("本轮已完成")).not.toBeInTheDocument();
+    expect(screen.getAllByText("分析完成")).toHaveLength(1);
     await user.click(screen.getByRole("button", { name: "重新读取历史" }));
     expect(runs).toBe(1);
   });
@@ -111,13 +112,92 @@ describe("workspace user flows with the real API client", () => {
     await user.click(screen.getByRole("button", { name: "发送消息" }));
     await waitFor(() => expect(screen.getByText("无法确认本轮结果，请勿重复发送")).toBeInTheDocument());
     expect(screen.getByRole("button", { name: "发送消息" })).toBeDisabled();
-    await user.click(screen.getByRole("button", { name: "本机已连接" }));
+    await user.click(screen.getByRole("button", { name: "连接待检查" }));
     expect(screen.getByText(/断开将丢失本页跟踪信息/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "断开连接" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "检查连接" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "本机已连接" })).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "发送消息" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "关闭弹窗" }));
     await user.click(screen.getByRole("button", { name: "读取历史，人工检查" }));
     await user.click(await screen.findByRole("button", { name: "我已检查历史，允许继续" }));
     expect(screen.getByRole("textbox", { name: "消息" })).toBeEnabled();
+    expect(runs).toBe(1);
+  });
+
+  it("dismisses a failed list refresh after a confirmed run and recovers on the next successful read", async () => {
+    const user = userEvent.setup();
+    let completed = false;
+    let listReads = 0;
+    let runs = 0;
+    server.use(
+      http.get(base + "/api/v1/sessions", () => {
+        listReads += 1;
+        return listReads === 2
+          ? HttpResponse.json({ error: { code: "proxy_unavailable", message: "无法取得后端响应；若已发送执行请求，结果可能不明，请勿自动重试。" } }, { status: 502 })
+          : HttpResponse.json([sessionA]);
+      }),
+      http.get(base + "/api/v1/sessions/session-a/messages", () => HttpResponse.json(completed ? history : [])),
+      http.post(base + "/api/v1/sessions/session-a/runs", () => { completed = true; runs += 1; return HttpResponse.json(completedRun); }),
+    );
+    renderWorkspace();
+    await connect(user);
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "消息" })).toBeEnabled());
+    await user.type(screen.getByRole("textbox", { name: "消息" }), "分析项目");
+    await user.click(screen.getByRole("button", { name: "发送消息" }));
+    expect(await screen.findByText(/会话列表刷新失败/)).toBeInTheDocument();
+    expect(screen.getByText("分析完成")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "连接待检查" })).toBeInTheDocument();
+    expect(screen.queryByText(/执行结果可能不明/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "关闭提示" }));
+    expect(screen.queryByText(/会话列表刷新失败/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "连接待检查" }));
+    await user.click(screen.getByRole("button", { name: "检查连接" }));
+    await waitFor(() => expect(listReads).toBe(3));
+    await waitFor(() => expect(screen.getByRole("button", { name: "本机已连接" })).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "关闭弹窗" }));
+    expect(screen.queryByText(/无法取得后端响应/)).not.toBeInTheDocument();
+    expect(runs).toBe(1);
+  });
+
+  it("does not show a permanent completed banner for a normal answer", async () => {
+    const user = userEvent.setup();
+    let completed = false;
+    server.use(
+      http.get(base + "/api/v1/sessions", () => HttpResponse.json([sessionA])),
+      http.get(base + "/api/v1/sessions/session-a/messages", () => HttpResponse.json(completed ? history : [])),
+      http.post(base + "/api/v1/sessions/session-a/runs", () => { completed = true; return HttpResponse.json(completedRun); }),
+    );
+    renderWorkspace();
+    await connect(user);
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "消息" })).toBeEnabled());
+    await user.type(screen.getByRole("textbox", { name: "消息" }), "分析项目");
+    await user.click(screen.getByRole("button", { name: "发送消息" }));
+    expect(await screen.findByText("分析完成")).toBeInTheDocument();
+    expect(screen.queryByText("本轮已完成")).not.toBeInTheDocument();
+  });
+
+  it("keeps non-fatal warnings without restoring the completed banner or retrying", async () => {
+    const user = userEvent.setup();
+    let completed = false;
+    let runs = 0;
+    server.use(
+      http.get(base + "/api/v1/sessions", () => HttpResponse.json([sessionA])),
+      http.get(base + "/api/v1/sessions/session-a/messages", () => HttpResponse.json(completed ? history : [])),
+      http.post(base + "/api/v1/sessions/session-a/runs", () => {
+        completed = true; runs += 1;
+        return HttpResponse.json({ ...completedRun, warnings: ["session_timestamp_update_failed"] });
+      }),
+    );
+    renderWorkspace();
+    await connect(user);
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "消息" })).toBeEnabled());
+    await user.type(screen.getByRole("textbox", { name: "消息" }), "分析项目");
+    await user.click(screen.getByRole("button", { name: "发送消息" }));
+    expect(await screen.findByText("运行提醒")).toBeInTheDocument();
+    expect(screen.getByText(/会话时间更新失败，但回答已生成/)).toBeInTheDocument();
+    expect(await screen.findByText("分析完成")).toBeInTheDocument();
+    expect(screen.queryByText("本轮已完成")).not.toBeInTheDocument();
     expect(runs).toBe(1);
   });
 

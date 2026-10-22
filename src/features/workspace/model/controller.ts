@@ -1,12 +1,12 @@
 import { QueryClient } from "@tanstack/react-query";
 import { createOmtClient } from "@/lib/omt-api/client";
 import type { OmtClient } from "@/lib/omt-api/contracts";
-import { ApiError, classifyRunError, errorMessage } from "@/lib/omt-api/errors";
+import { ApiError, classifyRunError, errorMessage, isConnectionFailure, readErrorMessage } from "@/lib/omt-api/errors";
 import { validateMessage } from "./format";
 import type { RunState, WorkspaceState } from "./types";
 
 const initialState = (): WorkspaceState => ({
-  connection: "disconnected", sessions: [], selectedId: null,
+  connection: "disconnected", backendStatus: "unknown", sessions: [], selectedId: null,
   histories: {}, runs: {}, creating: false, refreshing: false,
 });
 
@@ -18,6 +18,8 @@ export class WorkspaceController {
   private listeners = new Set<() => void>();
   private token = "";
   private generation = 0;
+  private requestSequence = 0;
+  private statusSequence = 0;
   private historyRequests = new Map<string, Promise<void>>();
   private listRequest: Promise<boolean> | undefined;
   private client: OmtClient;
@@ -44,6 +46,29 @@ export class WorkspaceController {
     this.patch({ runs: { ...this.state.runs, [id]: run } });
   }
 
+  private async observeRequest<T>(operation: () => Promise<T>, generation: number): Promise<T> {
+    const sequence = ++this.requestSequence;
+    const update = (status: WorkspaceState["backendStatus"]) => {
+      // A slow older success must not overwrite a newer request's failure.
+      if (!this.isCurrent(generation) || sequence < this.statusSequence) return;
+      this.statusSequence = sequence;
+      this.patch({ backendStatus: status, ...(status === "available" ? { connectionError: undefined } : {}) });
+    };
+    try {
+      const result = await operation();
+      update("available");
+      return result;
+    } catch (error) {
+      update(isConnectionFailure(error) ? "unavailable" : "available");
+      throw error;
+    }
+  }
+
+  dismissNotice = () => {
+    // Hiding presentation never acknowledges an uncertain run or unlocks sending.
+    this.patch({ notice: undefined, noticeSource: undefined, connectionError: undefined });
+  };
+
   private isCurrent(generation: number) { return this.generation === generation; }
   private isRunning() { return Object.values(this.state.runs).some((run) => run.phase === "sending"); }
   private hasUnknown() { return Object.values(this.state.runs).some((run) => run.phase === "unknown"); }
@@ -62,7 +87,7 @@ export class WorkspaceController {
     this.token = token;
     this.patch({ ...initialState(), connection: "connecting" });
     try {
-      const sessions = await this.client.listSessions();
+      const sessions = await this.observeRequest(() => this.client.listSessions(), generation);
       if (!this.isCurrent(generation)) return false;
       const selectedId = sessions[0]?.session_id ?? null;
       this.patch({ connection: "connected", sessions, selectedId });
@@ -71,7 +96,7 @@ export class WorkspaceController {
     } catch (error) {
       if (!this.isCurrent(generation)) return false;
       this.token = "";
-      this.patch({ connection: "disconnected", connectionError: errorMessage(error) });
+      this.patch({ connection: "disconnected", connectionError: readErrorMessage(error) });
       return false;
     }
   };
@@ -104,21 +129,22 @@ export class WorkspaceController {
     if (this.state.connection !== "connected" || this.state.creating) return Promise.resolve(false);
     if (this.listRequest) return this.listRequest;
     const generation = this.generation;
-    this.patch({ refreshing: true, notice: undefined });
+    this.patch({ refreshing: true });
     const request = (async () => {
       try {
         const sessions = await this.queries.fetchQuery({
-          queryKey: [generation, "sessions"], queryFn: () => this.client.listSessions(),
+          queryKey: [generation, "sessions"], queryFn: () => this.observeRequest(() => this.client.listSessions(), generation),
         });
         if (!this.isCurrent(generation)) return false;
         const selectedId = this.state.selectedId;
         const missing = selectedId !== null && !sessions.some((session) => session.session_id === selectedId);
         this.patch({ sessions, selectedId: missing ? null : selectedId,
-          notice: missing ? "当前会话已不可用，请重新选择或新建会话。" : undefined });
+          ...(missing ? { notice: "当前会话已不可用，请重新选择或新建会话。", noticeSource: "selection" } :
+            this.state.noticeSource === "sessions" ? { notice: undefined, noticeSource: undefined } : {}) });
         return true;
       } catch (error) {
         if (this.isCurrent(generation) && !this.authExpired(error, generation)) {
-          this.patch({ notice: `会话列表刷新失败：${errorMessage(error)}` });
+          this.patch({ notice: `会话列表刷新失败，已保留当前内容。${readErrorMessage(error)}`, noticeSource: "sessions" });
         }
         return false;
       } finally {
@@ -148,7 +174,7 @@ export class WorkspaceController {
     const request = (async () => {
       try {
         const history = await this.queries.fetchQuery({
-          queryKey: [generation, "messages", id], queryFn: () => this.client.getMessages(id),
+          queryKey: [generation, "messages", id], queryFn: () => this.observeRequest(() => this.client.getMessages(id), generation),
         });
         if (!this.isCurrent(generation)) return;
         this.patch({ histories: { ...this.state.histories, [id]: { status: "ready", messages: history } } });
@@ -158,7 +184,7 @@ export class WorkspaceController {
       } catch (error) {
         if (!this.isCurrent(generation) || this.authExpired(error, generation)) return;
         this.patch({ histories: { ...this.state.histories, [id]: {
-          status: "error", messages, error: errorMessage(error),
+          status: "error", messages, error: readErrorMessage(error),
         } } });
         if (error instanceof ApiError && error.code === "session_incomplete" && this.state.runs[id]?.phase !== "completed") {
           this.setRun(id, { ...this.state.runs[id], phase: "needs_attention", error: errorMessage(error) });
@@ -166,7 +192,7 @@ export class WorkspaceController {
         if (error instanceof ApiError && error.code === "session_not_found") {
           this.patch({ selectedId: this.state.selectedId === id ? null : this.state.selectedId,
             sessions: this.state.sessions.filter((session) => session.session_id !== id),
-            notice: "会话不存在或不属于当前工作目录，已清除失效选择。" });
+            notice: "会话不存在或不属于当前工作目录，已清除失效选择。", noticeSource: "selection" });
         }
       } finally {
         if (this.isCurrent(generation)) this.historyRequests.delete(id);
@@ -179,13 +205,13 @@ export class WorkspaceController {
   createSession = async (title?: string): Promise<boolean> => {
     if (this.state.connection !== "connected" || this.state.creating || this.state.refreshing || this.isRunning() || this.hasUnknown()) return false;
     if (title !== undefined && (Array.from(title).length > 200 || title.includes("\u0000"))) {
-      this.patch({ notice: "标题不能超过 200 个字符，也不能包含 NUL。" });
+      this.patch({ notice: "标题不能超过 200 个字符，也不能包含 NUL。", noticeSource: "input" });
       return false;
     }
     const generation = this.generation;
-    this.patch({ creating: true, notice: undefined });
+    this.patch({ creating: true, notice: undefined, noticeSource: undefined });
     try {
-      const session = await this.client.createSession(title === undefined ? {} : { title });
+      const session = await this.observeRequest(() => this.client.createSession(title === undefined ? {} : { title }), generation);
       if (!this.isCurrent(generation)) return false;
       this.patch({ sessions: [session, ...this.state.sessions], selectedId: session.session_id,
         histories: { ...this.state.histories, [session.session_id]: { status: "ready", messages: [] } } });
@@ -194,7 +220,7 @@ export class WorkspaceController {
       if (this.isCurrent(generation)) {
         this.patch({ creating: false });
         if (!this.authExpired(error, generation)) this.patch({ notice:
-          `创建未确认：${errorMessage(error)} 请先刷新列表检查是否已创建，不要连续重复创建。` });
+          `创建未确认：${errorMessage(error)} 请先刷新列表检查是否已创建，不要连续重复创建。`, noticeSource: "create" });
       }
       return false;
     } finally {
@@ -215,7 +241,7 @@ export class WorkspaceController {
     // Set the lock synchronously, before any await (including a double click in one render).
     this.setRun(id, { phase: "sending", message });
     try {
-      const result = await this.client.run(id, message);
+      const result = await this.observeRequest(() => this.client.run(id, message), generation);
       if (!this.isCurrent(generation)) return false;
       if (result.session_id !== id) throw new ApiError(200, "invalid_response", "执行响应的会话 ID 不匹配，无法确认结果。");
       this.setRun(id, { phase: "completed", message, answer: result.answer,

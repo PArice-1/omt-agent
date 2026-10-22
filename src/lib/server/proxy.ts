@@ -71,17 +71,20 @@ export async function proxyRequest(
     headers["Content-Type"] = "application/json";
   }
 
+  const execution = request.method === "POST" && path[4] === "runs";
+  const creating = request.method === "POST" && isSessions;
+  const uncertainSuffix = execution ? "执行结果可能不明，请勿重复发送。" : creating ? "会话可能已创建，请先刷新列表确认。" : "本次读取失败，可稍后手动刷新。";
   try {
     const target = backendUrl();
     target.pathname = "/" + path.map(encodeURIComponent).join("/");
     const response = await forwarder(target, { method: request.method, headers, ...(body === undefined ? {} : { body }) });
     if (response.status >= 300 && response.status < 400)
-      return jsonError(502, "proxy_invalid_response", "后端返回了重定向，代理已拒绝跟随；执行结果可能不明。");
+      return jsonError(502, "proxy_invalid_response", `后端返回了重定向，代理已拒绝跟随。${uncertainSuffix}`);
     const responseHeaders = new Headers({ "Cache-Control": "no-store", "Content-Type": response.headers.get("content-type") ?? "application/json" });
     const challenge = response.headers.get("www-authenticate");
     if (challenge) responseHeaders.set("WWW-Authenticate", challenge);
     return new Response(await response.text(), { status: response.status, headers: responseHeaders });
   } catch {
-    return jsonError(502, "proxy_unavailable", "无法取得后端响应；若已发送执行请求，结果可能不明，请勿自动重试。");
+    return jsonError(502, "proxy_unavailable", `未取得完整后端响应。${uncertainSuffix}`);
   }
 }
