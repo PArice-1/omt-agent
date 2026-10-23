@@ -10,13 +10,12 @@ const initialState = (): WorkspaceState => ({
   histories: {}, runs: {}, creating: false, refreshing: false,
 });
 
-type ClientFactory = (getToken: () => string) => OmtClient;
+type ClientFactory = () => OmtClient;
 
 /** All async writes belong to both a connection generation and a session ID. */
 export class WorkspaceController {
   private state = initialState();
   private listeners = new Set<() => void>();
-  private token = "";
   private generation = 0;
   private requestSequence = 0;
   private statusSequence = 0;
@@ -27,8 +26,8 @@ export class WorkspaceController {
     defaultOptions: { queries: { retry: false, staleTime: 0, gcTime: 0 }, mutations: { retry: false } },
   });
 
-  constructor(factory: ClientFactory = (getToken) => createOmtClient({ getToken })) {
-    this.client = factory(() => this.token);
+  constructor(factory: ClientFactory = createOmtClient) {
+    this.client = factory();
   }
 
   getSnapshot = (): WorkspaceState => this.state;
@@ -73,18 +72,13 @@ export class WorkspaceController {
   private isRunning() { return Object.values(this.state.runs).some((run) => run.phase === "sending"); }
   private hasUnknown() { return Object.values(this.state.runs).some((run) => run.phase === "unknown"); }
 
-  connect = async (token: string): Promise<boolean> => {
-    if (this.state.connection === "connecting" || this.isRunning() || this.state.creating) return false;
-    if (token.trim().length < 32) {
-      this.patch({ connectionError: "访问令牌去除首尾空白后至少需要 32 个字符。" });
-      return false;
-    }
+  connect = async (): Promise<boolean> => {
+    if (this.state.connection !== "disconnected" || this.isRunning() || this.state.creating) return false;
     this.generation += 1;
     const generation = this.generation;
     this.queries.clear();
     this.historyRequests.clear();
     this.listRequest = undefined;
-    this.token = token;
     this.patch({ ...initialState(), connection: "connecting" });
     try {
       const sessions = await this.observeRequest(() => this.client.listSessions(), generation);
@@ -95,7 +89,6 @@ export class WorkspaceController {
       return true;
     } catch (error) {
       if (!this.isCurrent(generation)) return false;
-      this.token = "";
       this.patch({ connection: "disconnected", connectionError: readErrorMessage(error) });
       return false;
     }
@@ -104,26 +97,12 @@ export class WorkspaceController {
   disconnect = (): boolean => {
     if (this.isRunning() || this.state.creating || this.state.connection === "connecting") return false;
     this.generation += 1;
-    this.token = "";
     this.queries.clear();
     this.historyRequests.clear();
     this.listRequest = undefined;
     this.patch(initialState());
     return true;
   };
-
-  private authExpired(error: unknown, generation: number): boolean {
-    if (!this.isCurrent(generation)) return false;
-    if (error instanceof ApiError && error.code === "unauthorized") {
-      this.disconnect();
-      // An unauthorized run is a definite rejection, so it is safe to forget this credential.
-      if (this.state.connection === "disconnected") {
-        this.patch({ connectionError: "访问令牌已失效，请重新连接。" });
-      }
-      return true;
-    }
-    return false;
-  }
 
   refreshSessions = (): Promise<boolean> => {
     if (this.state.connection !== "connected" || this.state.creating) return Promise.resolve(false);
@@ -143,7 +122,7 @@ export class WorkspaceController {
             this.state.noticeSource === "sessions" ? { notice: undefined, noticeSource: undefined } : {}) });
         return true;
       } catch (error) {
-        if (this.isCurrent(generation) && !this.authExpired(error, generation)) {
+        if (this.isCurrent(generation)) {
           this.patch({ notice: `会话列表刷新失败，已保留当前内容。${readErrorMessage(error)}`, noticeSource: "sessions" });
         }
         return false;
@@ -182,7 +161,7 @@ export class WorkspaceController {
         if (run?.phase === "completed") this.setRun(id, { ...run, message: undefined, answer: undefined });
         if (run?.phase === "unknown") this.setRun(id, { ...run, reviewed: true });
       } catch (error) {
-        if (!this.isCurrent(generation) || this.authExpired(error, generation)) return;
+        if (!this.isCurrent(generation)) return;
         this.patch({ histories: { ...this.state.histories, [id]: {
           status: "error", messages, error: readErrorMessage(error),
         } } });
@@ -219,7 +198,7 @@ export class WorkspaceController {
     } catch (error) {
       if (this.isCurrent(generation)) {
         this.patch({ creating: false });
-        if (!this.authExpired(error, generation)) this.patch({ notice:
+        this.patch({ notice:
           `创建未确认：${errorMessage(error)} 请先刷新列表检查是否已创建，不要连续重复创建。`, noticeSource: "create" });
       }
       return false;
@@ -250,7 +229,6 @@ export class WorkspaceController {
       if (!this.isCurrent(generation)) return false;
       this.setRun(id, { phase: classifyRunError(error), message, error: errorMessage(error),
         runId: error instanceof ApiError ? error.runId : undefined, reviewed: false });
-      this.authExpired(error, generation);
       return false;
     }
     // Read failures cannot turn a confirmed completed run into a failed run or resend it.

@@ -4,20 +4,17 @@ import { errorSchema } from "./schemas";
 
 export interface TransportOptions {
   baseUrl?: string;
-  getToken: () => string;
   fetcher?: typeof fetch;
 }
 
-export function createTransport({ baseUrl = "/api/omt", getToken, fetcher = fetch }: TransportOptions) {
+export function createTransport({ baseUrl = "/api/omt", fetcher = fetch }: TransportOptions = {}) {
   const base = baseUrl.replace(/\/+$/, "");
   return async function request<T>(
     path: string,
     schema: z.ZodType<T>,
     init: RequestInit = {},
-    authenticated = true,
   ): Promise<T> {
     const headers = new Headers({ Accept: "application/json" });
-    if (authenticated) headers.set("Authorization", `Bearer ${getToken()}`);
     if (init.body !== undefined) headers.set("Content-Type", "application/json");
     // No automatic retries or short timeout: POST may already have tool side effects.
     const response = await fetcher(`${base}${path}`, { ...init, headers, cache: "no-store" });

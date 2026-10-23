@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { MessageResponse, OmtClient, RunResponse } from "@/lib/omt-api/contracts";
 import { ApiError } from "@/lib/omt-api/errors";
 import { WorkspaceController } from "./controller";
-import { completedRun, deferred, history, sessionA, sessionB, testToken } from "../../../../tests/fixtures";
+import { completedRun, deferred, history, sessionA, sessionB } from "../../../../tests/fixtures";
 
 function setup() {
   const api = {
@@ -12,38 +12,42 @@ function setup() {
     getMessages: vi.fn<OmtClient["getMessages"]>().mockImplementation(async (id) => id === "session-a" ? history : []),
     run: vi.fn<OmtClient["run"]>().mockResolvedValue(completedRun),
   };
-  let getToken = () => "";
-  const controller = new WorkspaceController((reader) => { getToken = reader; return api; });
-  return { api, controller, getToken: () => getToken() };
+  const controller = new WorkspaceController(() => api);
+  return { api, controller };
 }
 async function connected() {
   const result = setup();
-  await result.controller.connect(testToken);
+  await result.controller.connect();
   await result.controller.loadHistory(sessionA.session_id);
   return result;
 }
 describe("workspace controller", () => {
-  it("stores credentials privately and clears them and caches on disconnect", async () => {
-    const { controller, getToken } = await connected();
-    expect(getToken()).toBe(testToken);
-    expect(JSON.stringify(controller.getSnapshot())).not.toContain(testToken);
+  it("connects without credentials and clears cached state on disconnect", async () => {
+    const { controller } = await connected();
+    expect(controller.getSnapshot().connection).toBe("connected");
     expect(controller.getSnapshot().histories["session-a"].messages).toEqual(history);
     controller.disconnect();
-    expect(getToken()).toBe("");
     expect(controller.getSnapshot().sessions).toEqual([]);
     expect(controller.getSnapshot().histories).toEqual({});
   });
-  it("rejects a short token without contacting the backend", async () => {
+  it("connects without a token and prevents overlapping or implicit reconnects", async () => {
     const { api, controller } = setup();
-    expect(await controller.connect("short")).toBe(false);
-    expect(api.listSessions).not.toHaveBeenCalled();
+    const pending = deferred<typeof sessionA[]>();
+    api.listSessions.mockReturnValueOnce(pending.promise);
+    const connecting = controller.connect();
+    expect(controller.getSnapshot().connection).toBe("connecting");
+    expect(await controller.connect()).toBe(false);
+    expect(controller.disconnect()).toBe(false);
+    pending.resolve([sessionA]);
+    expect(await connecting).toBe(true);
+    expect(await controller.connect()).toBe(false);
+    expect(api.listSessions).toHaveBeenCalledTimes(1);
   });
-  it("separates credential validation from the latest request failure and recovers on an explicit read", async () => {
-    const { api, controller, getToken } = await connected();
+  it("separates the workspace connection from the latest request failure and recovers on an explicit read", async () => {
+    const { api, controller } = await connected();
     api.listSessions.mockRejectedValueOnce(new ApiError(502, "proxy_unavailable", "legacy execution warning"));
     expect(await controller.refreshSessions()).toBe(false);
     expect(controller.getSnapshot()).toMatchObject({ connection: "connected", backendStatus: "unavailable", noticeSource: "sessions" });
-    expect(getToken()).toBe(testToken);
     expect(controller.getSnapshot().notice).not.toContain("legacy execution warning");
     expect(await controller.refreshSessions()).toBe(true);
     expect(controller.getSnapshot().backendStatus).toBe("available");
@@ -80,18 +84,20 @@ describe("workspace controller", () => {
     expect(controller.getSnapshot().backendStatus).toBe("available");
     expect(controller.getSnapshot().runs["session-a"].phase).toBe("rejected");
   });
-  it("does not retry failed authentication", async () => {
-    const { api, controller, getToken } = setup();
-    api.listSessions.mockRejectedValue(new ApiError(401, "unauthorized", "无权限"));
-    expect(await controller.connect(testToken)).toBe(false);
+  it("does not retry a failed connection and allows an explicit retry", async () => {
+    const { api, controller } = setup();
+    api.listSessions.mockRejectedValueOnce(new TypeError("network"));
+    expect(await controller.connect()).toBe(false);
     expect(api.listSessions).toHaveBeenCalledTimes(1);
-    expect(getToken()).toBe("");
+    expect(controller.getSnapshot()).toMatchObject({ connection: "disconnected", backendStatus: "unavailable" });
+    expect(await controller.connect()).toBe(true);
+    expect(api.listSessions).toHaveBeenCalledTimes(2);
   });
   it("deduplicates overlapping history reads", async () => {
     const { api, controller } = setup();
     const pending = deferred<MessageResponse[]>();
     api.getMessages.mockReturnValue(pending.promise);
-    await controller.connect(testToken);
+    await controller.connect();
     const first = controller.loadHistory("session-a");
     const second = controller.loadHistory("session-a");
     expect(first).toBe(second);
@@ -103,7 +109,7 @@ describe("workspace controller", () => {
     const { api, controller } = setup();
     const pending = deferred<MessageResponse[]>();
     api.getMessages.mockImplementation(async (id) => id === "session-a" ? pending.promise : []);
-    await controller.connect(testToken);
+    await controller.connect();
     controller.selectSession("session-b");
     await controller.loadHistory("session-b");
     pending.resolve(history);
@@ -116,10 +122,10 @@ describe("workspace controller", () => {
     const { api, controller } = setup();
     const pending = deferred<MessageResponse[]>();
     api.getMessages.mockReturnValueOnce(pending.promise).mockResolvedValue([]);
-    await controller.connect(testToken);
+    await controller.connect();
     const old = controller.loadHistory("session-a");
     controller.disconnect();
-    await controller.connect(testToken);
+    await controller.connect();
     await controller.loadHistory("session-a");
     pending.resolve(history);
     await old;
@@ -237,11 +243,10 @@ describe("workspace controller", () => {
     expect(api.run).toHaveBeenCalledTimes(1);
   });
   it("allows an explicit disconnect of uncertain state without retrying or claiming cancellation", async () => {
-    const { api, controller, getToken } = await connected();
+    const { api, controller } = await connected();
     api.run.mockRejectedValue(new TypeError("network"));
     await controller.send("session-a", "分析项目");
     expect(controller.disconnect()).toBe(true);
-    expect(getToken()).toBe("");
     expect(controller.getSnapshot().runs).toEqual({});
     expect(api.run).toHaveBeenCalledTimes(1);
   });
@@ -277,17 +282,19 @@ describe("workspace controller", () => {
     const { api, controller } = setup();
     const pending = deferred<MessageResponse[]>();
     api.getMessages.mockReturnValue(pending.promise);
-    await controller.connect(testToken);
+    await controller.connect();
     expect(await controller.send("session-a", "hello")).toBe(false);
     expect(api.run).not.toHaveBeenCalled();
     pending.resolve([]);
     await controller.loadHistory("session-a");
   });
-  it("clears invalid credentials after a rejected run", async () => {
-    const { api, controller, getToken } = await connected();
-    api.run.mockRejectedValue(new ApiError(401, "unauthorized", "无权限"));
+  it("preserves tracking for unexpected errors instead of treating them as token expiry", async () => {
+    const { api, controller } = await connected();
+    api.run.mockRejectedValue(new ApiError(401, "unauthorized", "unexpected upstream rejection"));
     await controller.send("session-a", "分析项目");
-    expect(controller.getSnapshot().connection).toBe("disconnected");
-    expect(getToken()).toBe("");
+    expect(controller.getSnapshot().connection).toBe("connected");
+    expect(controller.getSnapshot().runs["session-a"].phase).toBe("unknown");
+    expect(controller.getSnapshot().histories["session-a"].messages).toEqual(history);
+    expect(api.run).toHaveBeenCalledTimes(1);
   });
 });

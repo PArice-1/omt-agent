@@ -1,22 +1,22 @@
 import { describe, expect, it, vi } from "vitest";
 import { createOmtClient } from "./client";
 import { ApiError, classifyRunError } from "./errors";
-import { completedRun, history, sessionA, testToken } from "../../../tests/fixtures";
+import { completedRun, history, sessionA } from "../../../tests/fixtures";
 
 function setup(body: unknown, status = 200) {
   const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => Response.json(body, { status }));
-  const client = createOmtClient({ baseUrl: "http://localhost/api/omt/", getToken: () => testToken, fetcher });
+  const client = createOmtClient({ baseUrl: "http://localhost/api/omt/", fetcher });
   return { client, fetcher };
 }
 describe("OMT client contract", () => {
-  it("validates list responses and sends Bearer without a GET body", async () => {
+  it("validates list responses without authentication or a GET body", async () => {
     const { client, fetcher } = setup([sessionA]);
     expect(await client.listSessions()).toEqual([sessionA]);
     const [url, options] = fetcher.mock.calls[0];
     expect(url).toBe("http://localhost/api/omt/api/v1/sessions");
     expect(options?.headers).toBeInstanceOf(Headers);
     const headers = new Headers(options?.headers);
-    expect(headers.get("Authorization")).toBe(`Bearer ${testToken}`);
+    expect(headers.has("Authorization")).toBe(false);
     expect(headers.has("Content-Type")).toBe(false);
     expect(options?.body).toBeUndefined();
     expect(options?.cache).toBe("no-store");
@@ -45,19 +45,22 @@ describe("OMT client contract", () => {
     await client.run("s", "  分析\n");
     expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body))).toEqual({ message: "  分析\n" });
   });
-  it("health does not expose the token", async () => {
+  it("health requires no authentication", async () => {
     const { client, fetcher } = setup({ status: "ok" });
     await client.health();
     expect(new Headers(fetcher.mock.calls[0][1]?.headers).has("Authorization")).toBe(false);
   });
-  it("gets the current token on each request", async () => {
-    let token = "first";
-    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => Response.json([]));
-    const client = createOmtClient({ getToken: () => token, fetcher });
-    await client.listSessions();
-    token = "second";
-    await client.listSessions();
-    expect(new Headers(fetcher.mock.calls[1][1]?.headers).get("Authorization")).toBe("Bearer second");
+  it.each([
+    { body: [sessionA], call: (client: ReturnType<typeof createOmtClient>) => client.listSessions() },
+    { body: sessionA, call: (client: ReturnType<typeof createOmtClient>) => client.createSession() },
+    { body: history, call: (client: ReturnType<typeof createOmtClient>) => client.getMessages("s") },
+    { body: completedRun, call: (client: ReturnType<typeof createOmtClient>) => client.run("s", "hello") },
+  ])("omits Authorization on every business endpoint ($call)", async ({ body, call }) => {
+    const { client, fetcher } = setup(body);
+    await call(client);
+    const headers = new Headers(fetcher.mock.calls[0][1]?.headers);
+    expect(headers.has("Authorization")).toBe(false);
+    expect(headers.get("Accept")).toBe("application/json");
   });
   it("keeps HTTP status, error code and run ID", async () => {
     const { client, fetcher } = setup({ error: { code: "run_failed", message: "执行失败", run_id: "r1" } }, 502);
@@ -66,13 +69,13 @@ describe("OMT client contract", () => {
   });
   it("never retries a failed network POST", async () => {
     const fetcher = vi.fn<typeof fetch>().mockRejectedValue(new TypeError("network"));
-    const client = createOmtClient({ getToken: () => testToken, fetcher });
+    const client = createOmtClient({ fetcher });
     await expect(client.run("s", "hi")).rejects.toThrow("network");
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
   it("handles non-JSON infrastructure responses", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response("<html>bad gateway</html>", { status: 502 }));
-    await expect(createOmtClient({ getToken: () => testToken, fetcher }).run("s", "hi"))
+    await expect(createOmtClient({ fetcher }).run("s", "hi"))
       .rejects.toMatchObject({ code: "invalid_response" });
   });
   it("rejects malformed successful responses rather than asserting a type", async () => {

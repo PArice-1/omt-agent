@@ -1,9 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
-import { completedRun, history, sessionA, testToken } from "../fixtures";
+import { completedRun, history, sessionA } from "../fixtures";
 
 async function connect(page: Page) {
   await page.getByRole("button", { name: "未连接" }).click();
-  await page.getByLabel("访问令牌").fill(testToken);
   await page.getByRole("dialog").getByRole("button", { name: "连接本机后端" }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
 }
@@ -24,7 +23,8 @@ test("light blue welcome is usable on desktop and mobile", async ({ page }, test
 
 async function connectDialogKeyboardCheck(page: Page) {
   await page.getByRole("button", { name: "未连接" }).click();
-  await expect(page.getByLabel("访问令牌")).toBeFocused();
+  await expect(page.getByRole("dialog").getByRole("button", { name: "连接本机后端" })).toBeFocused();
+  await expect(page.getByLabel("访问令牌")).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toHaveCount(0);
 }
@@ -39,7 +39,7 @@ test("create → send → inspect tool history, without duplicate runs or answer
   page.on("pageerror", (error) => errors.push(error.message));
   await page.route("**/api/omt/**", async (route) => {
     const request = route.request();
-    expect(request.headers().authorization).toBe(`Bearer ${testToken}`);
+    expect(request.headers().authorization).toBeUndefined();
     const path = new URL(request.url()).pathname;
     if (path.endsWith("/runs")) {
       runs += 1;
@@ -83,6 +83,9 @@ test("create → send → inspect tool history, without duplicate runs or answer
   expect(await page.evaluate(() => ({ local: localStorage.length, session: sessionStorage.length }))).toEqual({ local: 0, session: 0 });
   await page.reload();
   await expect(page.getByRole("button", { name: "未连接" })).toBeVisible();
+  await connect(page);
+  await expect(page.getByText("分析完成", { exact: true })).toHaveCount(1);
+  expect(runs).toBe(1);
 });
 
 test("a lost run response requires inspection, not an automatic retry", async ({ page }) => {

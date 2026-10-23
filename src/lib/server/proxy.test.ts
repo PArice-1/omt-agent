@@ -2,10 +2,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { backendUrl, proxyRequest, type Forwarder } from "./proxy";
 
-const token = "local-placeholder-token";
 function request(path: string, method = "GET", headers: Record<string, string> = {}) {
   return new Request("http://127.0.0.1:3000/api/omt/" + path, {
-    method, headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...headers },
+    method, headers: { "Content-Type": "application/json", ...headers },
     ...(method === "POST" ? { body: JSON.stringify({ message: "hello" }) } : {}),
   });
 }
@@ -23,7 +22,7 @@ describe("local allowlisted proxy", () => {
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(upstream).toHaveBeenCalledTimes(1);
     expect(String(upstream.mock.calls[0][0])).toBe("http://127.0.0.1:8000/api/v1/sessions");
-    expect(upstream.mock.calls[0][1].headers.Authorization).toBe(`Bearer ${token}`);
+    expect(upstream.mock.calls[0][1].headers.Authorization).toBeUndefined();
     expect(upstream.mock.calls[0][1].headers.Cookie).toBeUndefined();
   });
   it("forwards POST body unchanged", async () => {
@@ -31,10 +30,26 @@ describe("local allowlisted proxy", () => {
     await proxyRequest(request("api/v1/sessions/s/runs", "POST"), ["api", "v1", "sessions", "s", "runs"], upstream);
     expect(upstream.mock.calls[0][1]).toMatchObject({ method: "POST", body: '{"message":"hello"}' });
   });
-  it("does not forward Bearer to health", async () => {
-    const upstream = forward(200, '{"status":"ok"}');
-    await proxyRequest(request("health"), ["health"], upstream);
-    expect(upstream.mock.calls[0][1].headers.Authorization).toBeUndefined();
+  it.each([
+    { method: "GET", path: ["health"] },
+    { method: "GET", path: ["api", "v1", "sessions"] },
+    { method: "POST", path: ["api", "v1", "sessions"] },
+    { method: "GET", path: ["api", "v1", "sessions", "s", "messages"] },
+    { method: "POST", path: ["api", "v1", "sessions", "s", "runs"] },
+  ])("accepts $method $path without authentication and strips incoming credentials", async ({ method, path }) => {
+    const upstream = forward();
+    const unauthenticated = await proxyRequest(request(path.join("/"), method), path, upstream);
+    expect(unauthenticated.status).toBe(200);
+    const credentialed = await proxyRequest(request(path.join("/"), method, {
+      Authorization: "Bearer ignored-test-value", Cookie: "ignored=value",
+    }), path, upstream);
+    expect(credentialed.status).toBe(200);
+    expect(upstream).toHaveBeenCalledTimes(2);
+    for (const [, options] of upstream.mock.calls) {
+      const headers = new Headers(options.headers);
+      expect(headers.has("Authorization")).toBe(false);
+      expect(headers.has("Cookie")).toBe(false);
+    }
   });
   it.each(["https://example.com", "file:///etc/passwd", "http://127.0.0.1:8000/path", "http://user:pass@localhost", "http://localhost/?x=1"])("rejects unsafe backend configuration %s", (url) => {
     expect(() => backendUrl(url)).toThrow();
@@ -59,7 +74,7 @@ describe("local allowlisted proxy", () => {
     const upstream = forward();
     const incoming = new Request("http://localhost:3000/api/omt/api/v1/sessions", {
       method: "POST", body: "{}", headers: { Host: "127.0.0.1:3000", Origin: "http://127.0.0.1:3000",
-        Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        "Content-Type": "application/json" },
     });
     expect((await proxyRequest(incoming, ["api", "v1", "sessions"], upstream)).status).toBe(200);
     expect(upstream).toHaveBeenCalledTimes(1);
@@ -105,12 +120,10 @@ describe("local allowlisted proxy", () => {
     if (method === "GET") expect(JSON.stringify(body)).not.toContain("执行结果可能不明");
     expect(upstream).toHaveBeenCalledTimes(1);
   });
-  it("preserves business errors and WWW-Authenticate", async () => {
-    const upstream = vi.fn<Forwarder>().mockResolvedValue({ status: 401,
-      headers: new Headers({ "www-authenticate": "Bearer" }), text: async () => '{"error":{"code":"unauthorized","message":"no"}}' });
-    const response = await proxyRequest(request("api/v1/sessions"), ["api", "v1", "sessions"], upstream);
-    expect(response.status).toBe(401);
-    expect(response.headers.get("www-authenticate")).toBe("Bearer");
-    expect(await response.json()).toMatchObject({ error: { code: "unauthorized" } });
+  it("preserves business error status and body", async () => {
+    const upstream = forward(409, '{"error":{"code":"session_busy","message":"busy"}}');
+    const response = await proxyRequest(request("api/v1/sessions/s/messages"), ["api", "v1", "sessions", "s", "messages"], upstream);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: { code: "session_busy", message: "busy" } });
   });
 });

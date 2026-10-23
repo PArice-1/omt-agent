@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { completedRun, history, sessionA, testToken } from "../fixtures";
+import { completedRun, history, sessionA } from "../fixtures";
 
 test("a failed post-run list refresh can be dismissed and checked without rerunning", async ({ page }) => {
   let completed = false;
@@ -15,7 +15,6 @@ test("a failed post-run list refresh can be dismissed and checked without rerunn
   });
   await page.goto("/");
   await page.getByRole("button", { name: "未连接" }).click();
-  await page.getByLabel("访问令牌").fill(testToken);
   await page.getByRole("dialog").getByRole("button", { name: "连接本机后端" }).click();
   await expect(page.getByRole("textbox", { name: "消息" })).toBeEnabled();
   await page.getByRole("textbox", { name: "消息" }).fill("分析项目");

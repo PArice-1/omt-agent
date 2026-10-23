@@ -1,12 +1,13 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
+import { StrictMode } from "react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import { Workspace } from "./workspace";
 import { WorkspaceController } from "./model/controller";
 import { createOmtClient } from "@/lib/omt-api/client";
-import { completedRun, history, sessionA, testToken } from "../../../tests/fixtures";
+import { completedRun, history, sessionA } from "../../../tests/fixtures";
 
 const base = "http://localhost/api/omt";
 const server = setupServer();
@@ -21,17 +22,40 @@ afterAll(() => server.close());
 async function connect(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("button", { name: "未连接" }));
   const dialog = screen.getByRole("dialog");
-  await user.type(within(dialog).getByLabelText("访问令牌"), testToken);
+  expect(within(dialog).queryByLabelText("访问令牌")).not.toBeInTheDocument();
+  expect(within(dialog).getByRole("button", { name: "连接本机后端" })).toBeEnabled();
+  expect(within(dialog).getByRole("button", { name: "连接本机后端" })).toHaveFocus();
   await user.click(within(dialog).getByRole("button", { name: "连接本机后端" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 }
 function renderWorkspace() {
-  const controller = new WorkspaceController((getToken) => createOmtClient({ baseUrl: base, getToken }));
-  render(<Workspace controller={controller} />);
+  const controller = new WorkspaceController(() => createOmtClient({ baseUrl: base }));
+  render(<StrictMode><Workspace controller={controller} /></StrictMode>);
   return controller;
 }
 
 describe("workspace user flows with the real API client", () => {
+  it("waits for explicit connection without making requests on mount in Strict Mode", async () => {
+    const user = userEvent.setup();
+    let reads = 0;
+    let posts = 0;
+    server.use(
+      http.get(base + "/api/v1/sessions", () => { reads += 1; return HttpResponse.json([]); }),
+      http.post(base + "/api/v1/*", () => { posts += 1; return HttpResponse.json({}); }),
+    );
+    const controller = renderWorkspace();
+    expect(controller.getSnapshot().connection).toBe("disconnected");
+    expect(screen.getByRole("textbox", { name: "消息" })).toBeDisabled();
+    expect(reads).toBe(0);
+    expect(posts).toBe(0);
+    await user.click(screen.getByRole("button", { name: "未连接" }));
+    expect(reads).toBe(0);
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "连接本机后端" }));
+    await waitFor(() => expect(controller.getSnapshot().connection).toBe("connected"));
+    expect(reads).toBe(1);
+    expect(posts).toBe(0);
+  });
+
   it("connects, creates a session, sends and replaces the full history without duplicate answers", async () => {
     const user = userEvent.setup();
     let created = false;
@@ -39,7 +63,7 @@ describe("workspace user flows with the real API client", () => {
     let runs = 0;
     server.use(
       http.get(base + "/api/v1/sessions", ({ request }) => {
-        expect(request.headers.get("Authorization")).toBe(`Bearer ${testToken}`);
+        expect(request.headers.has("Authorization")).toBe(false);
         return HttpResponse.json(created ? [sessionA] : []);
       }),
       http.post(base + "/api/v1/sessions", async ({ request }) => {
@@ -201,15 +225,26 @@ describe("workspace user flows with the real API client", () => {
     expect(runs).toBe(1);
   });
 
-  it("shows authentication failures without storing the credential", async () => {
+  it("shows a failed connection and lets the user retry without entering credentials", async () => {
     const user = userEvent.setup();
-    server.use(http.get(base + "/api/v1/sessions", () => HttpResponse.json({ error: { code: "unauthorized", message: "令牌错误" } }, { status: 401 })));
+    let reads = 0;
+    server.use(http.get(base + "/api/v1/sessions", () => {
+      reads += 1;
+      return reads === 1
+        ? HttpResponse.json({ error: { code: "manager_closed", message: "服务未就绪" } }, { status: 503 })
+        : HttpResponse.json([]);
+    }));
     const controller = renderWorkspace();
     await user.click(screen.getByRole("button", { name: "未连接" }));
-    await user.type(screen.getByLabelText("访问令牌"), testToken);
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "连接本机后端" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("令牌错误");
+    expect(await screen.findByRole("alert")).toHaveTextContent("服务未就绪");
     expect(controller.getSnapshot().connection).toBe("disconnected");
-    expect(JSON.stringify(controller.getSnapshot())).not.toContain(testToken);
+    expect(reads).toBe(1);
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).queryByLabelText("访问令牌")).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "连接本机后端" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(controller.getSnapshot().connection).toBe("connected");
+    expect(reads).toBe(2);
   });
 });

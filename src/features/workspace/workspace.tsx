@@ -40,7 +40,7 @@ export function Workspace({ controller: provided }: { controller?: WorkspaceCont
         <div className="topbar-left"><button className="icon-button mobile-menu" aria-label="展开会话导航" aria-expanded={sidebarExpanded} aria-controls="session-sidebar" onClick={() => setSidebarExpanded(!sidebarExpanded)}><Menu size={20} /></button>
           <span className="workspace-label">工作空间</span><span className="breadcrumb-slash">/</span><span className="current-title">{selected ? sessionTitle(selected.title) : "新的开始"}</span>
         </div>
-        <button className={`connection-pill ${connectionIssue ? "has-issue" : ""}`} title={connectionIssue ? "令牌曾验证通过，但最近请求未取得有效响应；不代表执行已取消。" : connected ? "最近请求已通过，不代表后续请求一定成功。" : "输入访问令牌以连接本机后端"} onClick={() => setConnectionOpen(true)}><span className={`status-dot ${connectionIssue ? "issue" : connected ? "connected" : ""}`} />{connectionIssue ? "连接待检查" : connected ? "本机已连接" : "未连接"}<ArrowUpRight size={13} /></button>
+        <button className={`connection-pill ${connectionIssue ? "has-issue" : ""}`} title={connectionIssue ? "之前连接成功，但最近请求未取得有效响应；不代表执行已取消。" : connected ? "最近请求已通过，不代表后续请求一定成功。" : "无需令牌，连接本机后端"} onClick={() => setConnectionOpen(true)}><span className={`status-dot ${connectionIssue ? "issue" : connected ? "connected" : ""}`} />{connectionIssue ? "连接待检查" : connected ? "本机已连接" : "未连接"}<ArrowUpRight size={13} /></button>
       </header>
       {(state.notice || !connected && state.connectionError && !connectionOpen) && <div className="global-notice" role="alert"><CircleAlert size={17} /><span>{state.notice || state.connectionError}</span>{!connected && <button className="text-button" onClick={() => setConnectionOpen(true)}>重新连接</button>}<button type="button" className="icon-button" aria-label="关闭提示" onClick={controller.dismissNotice}><X size={17} /></button></div>}
       <div className="conversation">
@@ -61,7 +61,7 @@ export function Workspace({ controller: provided }: { controller?: WorkspaceCont
         }} />
       </div>
     </main>
-    {connectionOpen && <ConnectionDialog state={state} busy={running || state.creating} onConnect={async (token) => { const success = await controller.connect(token); if (success) setDrafts({}); return success; }} onCheck={controller.refreshSessions} onDisconnect={() => { const success = controller.disconnect(); if (success) setDrafts({}); return success; }} onClose={() => setConnectionOpen(false)} />}
+    {connectionOpen && <ConnectionDialog state={state} busy={running || state.creating} onConnect={async () => { const success = await controller.connect(); if (success) setDrafts({}); return success; }} onCheck={controller.refreshSessions} onDisconnect={() => { const success = controller.disconnect(); if (success) setDrafts({}); return success; }} onClose={() => setConnectionOpen(false)} />}
     {newOpen && <NewSessionDialog busy={state.creating} error={state.notice} onClose={() => setNewOpen(false)} onCreate={async (title) => {
       const success = await controller.createSession(title);
       const selectedId = controller.getSnapshot().selectedId;

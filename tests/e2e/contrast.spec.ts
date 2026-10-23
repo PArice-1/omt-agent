@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { completedRun, history, sessionA, testToken } from "../fixtures";
+import { completedRun, history, sessionA } from "../fixtures";
 
 test.use({ reducedMotion: "reduce" });
 
@@ -47,9 +47,8 @@ test("welcome, disabled composer and connection dialog keep readable contrast", 
   await page.locator(".suggestion-card").first().hover();
   await expectReadable(page, ".suggestion-card > span:nth-child(2), .suggestion-card p");
   await page.getByRole("button", { name: "未连接" }).click();
-  await expectReadable(page, ".dialog h2, .dialog-description, .endpoint, .field-label, .field-help, .privacy-note, .button.primary");
-  await expectReadable(page, ".dialog input", "::placeholder");
-  await page.getByLabel("访问令牌").fill(testToken);
+  await expectReadable(page, ".dialog h2, .dialog-description, .endpoint, .field-help, .privacy-note, .button.primary");
+  await expect(page.getByRole("dialog").locator("input")).toHaveCount(0);
   await expectReadable(page, ".button.primary");
   await page.locator(".button.primary").hover();
   await expectReadable(page, ".button.primary");
@@ -68,7 +67,6 @@ test("session, message, tool and non-fatal warning text stay readable", async ({
   });
   await page.goto("/");
   await page.getByRole("button", { name: "未连接" }).click();
-  await page.getByLabel("访问令牌").fill(testToken);
   await page.getByRole("dialog").getByRole("button", { name: "连接本机后端" }).click();
   await expect(page.getByRole("textbox", { name: "消息" })).toBeEnabled();
   await expectReadable(page, ".new-session-button, .session-label > span, .session-label time, .text-button, .connection-pill");

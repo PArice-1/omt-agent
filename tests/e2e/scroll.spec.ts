@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import type { MessageResponse } from "../../src/lib/omt-api/contracts";
-import { completedRun, sessionA, testToken } from "../fixtures";
+import { completedRun, sessionA } from "../fixtures";
 
 test("sending and new output scroll to the latest message even after reading older history", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -35,7 +35,6 @@ test("sending and new output scroll to the latest message even after reading old
   try {
     await page.goto("/");
     await page.getByRole("button", { name: "未连接" }).click();
-    await page.getByLabel("访问令牌").fill(testToken);
     await page.getByRole("dialog").getByRole("button", { name: "连接本机后端" }).click();
     await expect(page.getByRole("textbox", { name: "消息" })).toBeEnabled();
     const scroller = page.locator(".message-scroll");

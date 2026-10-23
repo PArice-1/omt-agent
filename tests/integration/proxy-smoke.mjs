@@ -4,7 +4,6 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 
 const calls = [];
-const token = 'placeholder-local-smoke-token-not-real';
 const backend = createServer(async (req, res) => {
   let body = '';
   for await (const chunk of req) body += chunk;
@@ -41,15 +40,34 @@ try {
   assert(ready, logs);
   assert.deepEqual(await (await fetch(origin + '/api/omt/health')).json(), { status: 'ok' });
   const response = await fetch(origin + '/api/omt/api/v1/sessions/opaque%2Fid/runs', {
-    method: 'POST', headers: { Origin: origin, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Cookie: 'do-not-forward=secret' },
+    method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json', Cookie: 'do-not-forward=secret' },
     body: JSON.stringify({ message: 'local mock only' }),
   });
   assert.equal(response.status, 200, await response.clone().text());
   assert.equal((await response.json()).answer, 'stub only');
-  assert.deepEqual(calls[1], { url: '/api/v1/sessions/opaque%2Fid/runs', method: 'POST', authorization: `Bearer ${token}`, cookie: undefined, body: '{"message":"local mock only"}' });
-  assert.equal((await fetch(origin + '/api/omt/api/v1/sessions', { method: 'POST', headers: { Origin: 'https://foreign.invalid', Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: '{}' })).status, 403);
+  assert.deepEqual(calls[1], { url: '/api/v1/sessions/opaque%2Fid/runs', method: 'POST', authorization: undefined, cookie: undefined, body: '{"message":"local mock only"}' });
+  assert.equal((await fetch(origin + '/api/omt/api/v1/sessions', { method: 'POST', headers: { Origin: 'https://foreign.invalid', 'Content-Type': 'application/json' }, body: '{}' })).status, 403);
   assert.equal(calls.length, 2);
-  console.log('PASS: built Next route → isolated local HTTP stub; encoded ID, Bearer, JSON, no Cookie, cross-origin rejection. No real backend called.');
+  assert.equal((await fetch(origin + '/api/omt/api/v1/sessions')).status, 200);
+  assert.equal((await fetch(origin + '/api/omt/api/v1/sessions', {
+    method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: '{}',
+  })).status, 200);
+  assert.equal((await fetch(origin + '/api/omt/api/v1/sessions/opaque%2Fid/messages')).status, 200);
+  assert.equal((await fetch(origin + '/api/omt/api/v1/sessions', {
+    headers: { Authorization: 'Bearer ignored-test-value', Cookie: 'do-not-forward=secret' },
+  })).status, 200);
+  assert.equal(calls.length, 6);
+  for (const call of calls) {
+    assert.equal(call.authorization, undefined);
+    assert.equal(call.cookie, undefined);
+  }
+  assert.deepEqual(calls.slice(2).map(({ url, method, body }) => ({ url, method, body })), [
+    { url: '/api/v1/sessions', method: 'GET', body: '' },
+    { url: '/api/v1/sessions', method: 'POST', body: '{}' },
+    { url: '/api/v1/sessions/opaque%2Fid/messages', method: 'GET', body: '' },
+    { url: '/api/v1/sessions', method: 'GET', body: '' },
+  ]);
+  console.log('PASS: built Next route → isolated local HTTP stub; all endpoints without auth, encoded ID, JSON, no Authorization/Cookie forwarding, cross-origin rejection. No real backend called.');
 } finally {
   frontend.kill('SIGTERM');
   if (frontend.exitCode === null) await once(frontend, 'exit');

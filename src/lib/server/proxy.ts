@@ -23,7 +23,7 @@ const forward: Forwarder = (url, options) => upstreamFetch(url, {
   ...options, dispatcher, redirect: "manual",
 });
 
-/** Allowlisted reverse proxy; never forward cookies or a user-controlled upstream. */
+/** Allowlisted reverse proxy; never forward credentials or a user-controlled upstream. */
 export async function proxyRequest(
   request: Request,
   path: string[],
@@ -56,11 +56,6 @@ export async function proxyRequest(
     return jsonError(403, "http_error", "拒绝跨来源代理请求。");
 
   const headers: Record<string, string> = { Accept: "application/json", "Cache-Control": "no-store" };
-  if (!isHealth) {
-    const authorization = request.headers.get("authorization");
-    if (!authorization?.startsWith("Bearer ")) return jsonError(401, "unauthorized", "请提供访问令牌。");
-    headers.Authorization = authorization;
-  }
   let body: string | undefined;
   if (request.method === "POST") {
     if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json"))
@@ -81,8 +76,6 @@ export async function proxyRequest(
     if (response.status >= 300 && response.status < 400)
       return jsonError(502, "proxy_invalid_response", `后端返回了重定向，代理已拒绝跟随。${uncertainSuffix}`);
     const responseHeaders = new Headers({ "Cache-Control": "no-store", "Content-Type": response.headers.get("content-type") ?? "application/json" });
-    const challenge = response.headers.get("www-authenticate");
-    if (challenge) responseHeaders.set("WWW-Authenticate", challenge);
     return new Response(await response.text(), { status: response.status, headers: responseHeaders });
   } catch {
     return jsonError(502, "proxy_unavailable", `未取得完整后端响应。${uncertainSuffix}`);

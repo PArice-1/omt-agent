@@ -30,7 +30,7 @@ export function readErrorMessage(error: unknown): string {
 export function classifyRunError(error: unknown): "rejected" | "needs_attention" | "unknown" {
   if (!(error instanceof ApiError)) return "unknown";
   if (["run_failed", "session_incomplete"].includes(error.code)) return "needs_attention";
-  if (["unauthorized", "invalid_request", "session_not_found", "session_busy", "capacity_exceeded"].includes(error.code))
+  if (["invalid_request", "session_not_found", "session_busy", "capacity_exceeded"].includes(error.code))
     return "rejected";
   return "unknown";
 }
