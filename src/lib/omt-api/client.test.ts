@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createOmtClient } from "./client";
 import { ApiError, classifyRunError } from "./errors";
-import { completedRun, history, sessionA } from "../../../tests/fixtures";
+import { completedRun, history, sessionA, runtime } from "../../../tests/fixtures";
 
 function setup(body: unknown, status = 200) {
   const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => Response.json(body, { status }));
@@ -44,6 +44,38 @@ describe("OMT client contract", () => {
     const { client, fetcher } = setup(completedRun);
     await client.run("s", "  分析\n");
     expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body))).toEqual({ message: "  分析\n" });
+  });
+  it.each([
+    { path: "/api/v1/runtime", method: undefined, body: undefined, response: runtime, call: (api: ReturnType<typeof createOmtClient>) => api.getRuntime() },
+    { path: "/api/v1/providers", method: undefined, body: undefined, response: [{ provider: "p", logged_in: true }], call: (api: ReturnType<typeof createOmtClient>) => api.listProviders() },
+    { path: "/api/v1/models", method: undefined, body: undefined, response: [], call: (api: ReturnType<typeof createOmtClient>) => api.listModels() },
+    { path: "/api/v1/runtime/model", method: "PUT", body: { provider: "p", model: "m" }, response: runtime, call: (api: ReturnType<typeof createOmtClient>) => api.changeModel("p", "m") },
+    { path: "/api/v1/runtime/thinking", method: "PUT", body: { level: "high" }, response: runtime, call: (api: ReturnType<typeof createOmtClient>) => api.changeThinking("high") },
+    { path: "/api/v1/model-logins", method: "POST", body: { provider: "p", api_key: "fake-key" }, response: { login_id: "preview", provider: "p", models: ["m"], from_cache: false, expires_in: 600 }, call: (api: ReturnType<typeof createOmtClient>) => api.previewLogin("p", "fake-key") },
+    { path: "/api/v1/model-logins/a%2Fb/confirm", method: "POST", body: { model: "m" }, response: { configuration_saved: true, runtime_ready: true, runtime, error: null }, call: (api: ReturnType<typeof createOmtClient>) => api.confirmLogin("a/b", "m") },
+  ])("uses the documented method, path and payload for $path", async ({ path, method, body, response, call }) => {
+    const { client, fetcher } = setup(response);
+    await call(client);
+    const [url, options] = fetcher.mock.calls[0];
+    expect(url).toBe(`http://localhost/api/omt${path}`);
+    expect(options?.method).toBe(method);
+    expect(options?.body).toBe(body === undefined ? undefined : JSON.stringify(body));
+    expect(new Headers(options?.headers).has("Authorization")).toBe(false);
+  });
+  it("omits api_key to reuse local credentials and retains optional history fields", async () => {
+    const { client, fetcher } = setup({ login_id: "p", provider: "p", models: [], from_cache: true, expires_in: 600 });
+    await client.previewLogin("p");
+    expect(fetcher.mock.calls[0][1]?.body).toBe('{"provider":"p"}');
+    const oldAndNew = [...history, { role: "assistant", text: "正文", message_id: "m", reasoning: "独立思考", tool_calls: [] }];
+    expect(await setup(oldAndNew).client.getMessages("s")).toEqual(oldAndNew);
+  });
+  it("does not confuse a 200 confirmation with successful activation", async () => {
+    const saved = { configuration_saved: true, runtime_ready: false, runtime: { ...runtime, ready: false, thinking: null }, error: { code: "model_change_failed", message: "启用失败" } };
+    expect(await setup(saved).client.confirmLogin("p", "m")).toEqual(saved);
+    await expect(setup({ configured: true }).client.getRuntime()).rejects.toMatchObject({ code: "invalid_response" });
+    const failed = setup({ error: { code: "manager_busy", message: "忙碌" } }, 409);
+    await expect(failed.client.changeModel("p", "m")).rejects.toMatchObject({ code: "manager_busy" });
+    expect(failed.fetcher).toHaveBeenCalledTimes(1);
   });
   it("health requires no authentication", async () => {
     const { client, fetcher } = setup({ status: "ok" });

@@ -1,6 +1,9 @@
 import { QueryClient } from "@tanstack/react-query";
 import { createOmtClient } from "@/lib/omt-api/client";
-import type { OmtClient } from "@/lib/omt-api/contracts";
+import type { OmtClient, TerminalEvent } from "@/lib/omt-api/contracts";
+import { isTerminal } from "@/lib/omt-api/events";
+import { RuntimeController } from "@/features/runtime/controller";
+import { applyRunEvent } from "./stream-state";
 import { ApiError, classifyRunError, errorMessage, isConnectionFailure, readErrorMessage } from "@/lib/omt-api/errors";
 import { validateMessage } from "./format";
 import type { RunState, WorkspaceState } from "./types";
@@ -22,12 +25,15 @@ export class WorkspaceController {
   private historyRequests = new Map<string, Promise<void>>();
   private listRequest: Promise<boolean> | undefined;
   private client: OmtClient;
+  private aborters = new Map<string, AbortController>();
+  readonly runtime: RuntimeController;
   private queries = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: 0, gcTime: 0 }, mutations: { retry: false } },
   });
 
   constructor(factory: ClientFactory = createOmtClient) {
     this.client = factory();
+    this.runtime = new RuntimeController(this.client, () => this.isRunning() || this.state.creating);
   }
 
   getSnapshot = (): WorkspaceState => this.state;
@@ -69,7 +75,7 @@ export class WorkspaceController {
   };
 
   private isCurrent(generation: number) { return this.generation === generation; }
-  private isRunning() { return Object.values(this.state.runs).some((run) => run.phase === "sending"); }
+  private isRunning() { return this.aborters.size > 0 || Object.values(this.state.runs).some((run) => run.phase === "sending" || run.receiving); }
   private hasUnknown() { return Object.values(this.state.runs).some((run) => run.phase === "unknown"); }
 
   connect = async (): Promise<boolean> => {
@@ -81,6 +87,13 @@ export class WorkspaceController {
     this.listRequest = undefined;
     this.patch({ ...initialState(), connection: "connecting" });
     try {
+      const runtime = await this.runtime.inspect();
+      if (!runtime) throw new ApiError(503, "runtime_status_unavailable", "无法读取运行状态，请检查本机后端。");
+      if (!this.isCurrent(generation)) return false;
+      if (!runtime.ready) {
+        this.patch({ connection: "connected", backendStatus: "available" });
+        return true;
+      }
       const sessions = await this.observeRequest(() => this.client.listSessions(), generation);
       if (!this.isCurrent(generation)) return false;
       const selectedId = sessions[0]?.session_id ?? null;
@@ -105,7 +118,7 @@ export class WorkspaceController {
   };
 
   refreshSessions = (): Promise<boolean> => {
-    if (this.state.connection !== "connected" || this.state.creating) return Promise.resolve(false);
+    if (this.state.connection !== "connected" || this.state.creating || !this.runtime.getSnapshot().runtime?.ready) return Promise.resolve(false);
     if (this.listRequest) return this.listRequest;
     const generation = this.generation;
     this.patch({ refreshing: true });
@@ -140,11 +153,11 @@ export class WorkspaceController {
   selectSession = (id: string) => {
     if (!this.state.sessions.some((session) => session.session_id === id)) return;
     this.patch({ selectedId: id });
-    if (!this.state.histories[id] && this.state.runs[id]?.phase !== "sending") void this.loadHistory(id);
+    if (!this.state.histories[id] && !this.state.runs[id]?.receiving) void this.loadHistory(id);
   };
 
   loadHistory = (id: string): Promise<void> => {
-    if (this.state.connection !== "connected" || this.state.runs[id]?.phase === "sending") return Promise.resolve();
+    if (this.state.connection !== "connected" || this.state.runs[id]?.receiving || this.state.runs[id]?.phase === "sending") return Promise.resolve();
     const existing = this.historyRequests.get(id);
     if (existing) return existing;
     const generation = this.generation;
@@ -156,10 +169,13 @@ export class WorkspaceController {
           queryKey: [generation, "messages", id], queryFn: () => this.observeRequest(() => this.client.getMessages(id), generation),
         });
         if (!this.isCurrent(generation)) return;
-        this.patch({ histories: { ...this.state.histories, [id]: { status: "ready", messages: history } } });
         const run = this.state.runs[id];
-        if (run?.phase === "completed") this.setRun(id, { ...run, message: undefined, answer: undefined });
-        if (run?.phase === "unknown") this.setRun(id, { ...run, reviewed: true });
+        const updated = run?.phase === "completed" ? { ...run, message: undefined, answer: undefined, items: undefined }
+          : run?.phase === "unknown" ? { ...run, reviewed: true } : undefined;
+        // Replace history and remove completed temporary output atomically so
+        // subscribers can never observe a duplicate final answer in between.
+        this.patch({ histories: { ...this.state.histories, [id]: { status: "ready", messages: history } },
+          ...(updated ? { runs: { ...this.state.runs, [id]: updated } } : {}) });
       } catch (error) {
         if (!this.isCurrent(generation)) return;
         this.patch({ histories: { ...this.state.histories, [id]: {
@@ -182,7 +198,8 @@ export class WorkspaceController {
   };
 
   createSession = async (title?: string): Promise<boolean> => {
-    if (this.state.connection !== "connected" || this.state.creating || this.state.refreshing || this.isRunning() || this.hasUnknown()) return false;
+    if (this.state.connection !== "connected" || this.state.creating || this.state.refreshing || this.isRunning() || this.hasUnknown()
+      || !this.runtime.getSnapshot().runtime?.ready || this.runtime.getSnapshot().pending) return false;
     if (title !== undefined && (Array.from(title).length > 200 || title.includes("\u0000"))) {
       this.patch({ notice: "标题不能超过 200 个字符，也不能包含 NUL。", noticeSource: "input" });
       return false;
@@ -210,7 +227,9 @@ export class WorkspaceController {
   send = async (id: string, message: string): Promise<boolean> => {
     const run = this.state.runs[id];
     if (this.state.connection !== "connected" || this.state.creating || this.state.refreshing || this.isRunning() || this.hasUnknown()
-      || run?.phase === "needs_attention" || this.state.histories[id]?.status !== "ready") return false;
+      || ["needs_attention", "failed", "cancelled"].includes(run?.phase ?? "") || this.state.histories[id]?.status !== "ready"
+      || !this.runtime.getSnapshot().runtime?.ready || this.runtime.getSnapshot().runtime?.changing || this.runtime.getSnapshot().runtime?.busy
+      || this.runtime.getSnapshot().pending) return false;
     const validation = validateMessage(message);
     if (validation) {
       this.setRun(id, { phase: "rejected", error: validation });
@@ -218,19 +237,40 @@ export class WorkspaceController {
     }
     const generation = this.generation;
     // Set the lock synchronously, before any await (including a double click in one render).
-    this.setRun(id, { phase: "sending", message });
+    const aborter = new AbortController();
+    this.aborters.set(id, aborter);
+    this.setRun(id, { phase: "sending", message, receiving: true, items: [] });
+    let terminal: TerminalEvent | undefined;
     try {
-      const result = await this.observeRequest(() => this.client.run(id, message), generation);
-      if (!this.isCurrent(generation)) return false;
-      if (result.session_id !== id) throw new ApiError(200, "invalid_response", "执行响应的会话 ID 不匹配，无法确认结果。");
-      this.setRun(id, { phase: "completed", message, answer: result.answer,
-        warnings: result.warnings, runId: result.run_id });
+      const result = await this.observeRequest(() => this.client.streamRun(id, message, (event) => {
+        if (!this.isCurrent(generation)) return;
+        const current = this.state.runs[id];
+        if (event.session_id !== id || (current.runId && current.runId !== event.run_id))
+          throw new ApiError(200, "invalid_response", "流式事件不属于本轮请求，结果未确认。");
+        this.setRun(id, applyRunEvent(current, event));
+        if (isTerminal(event)) terminal = event;
+      }, aborter.signal), generation);
+      if (!terminal && this.isCurrent(generation)) {
+        if (result.session_id !== id) throw new ApiError(200, "invalid_response", "执行响应的会话 ID 不匹配，无法确认结果。");
+        this.setRun(id, applyRunEvent(this.state.runs[id], result));
+        terminal = result;
+      }
     } catch (error) {
       if (!this.isCurrent(generation)) return false;
-      this.setRun(id, { phase: classifyRunError(error), message, error: errorMessage(error),
-        runId: error instanceof ApiError ? error.runId : undefined, reviewed: false });
-      return false;
+      if (!terminal) {
+        const stopped = aborter.signal.aborted;
+        const current = this.state.runs[id];
+        // JSON errors before admission can be rejections. After run.started,
+        // transport/protocol errors never prove that execution stopped.
+        this.setRun(id, { ...current, phase: current.runId ? "unknown" : classifyRunError(error),
+          error: stopped ? "已停止接收，正在尝试终止。结果未确认；工具可能仍在执行，副作用不会自动回滚。" : errorMessage(error),
+          runId: current.runId ?? (error instanceof ApiError ? error.runId : undefined), reviewed: false });
+      }
+    } finally {
+      this.aborters.delete(id);
+      if (this.isCurrent(generation)) this.setRun(id, { ...this.state.runs[id], receiving: false });
     }
+    if (!this.isCurrent(generation) || !terminal || terminal.type !== "run.completed") return false;
     // Read failures cannot turn a confirmed completed run into a failed run or resend it.
     // A list request begun before completion may contain stale timestamps/order.
     // Finish it first, then explicitly request a post-completion snapshot.
@@ -241,6 +281,13 @@ export class WorkspaceController {
     };
     await Promise.all([this.loadHistory(id), refreshList()]);
     return this.isCurrent(generation);
+  };
+
+  stop = (id: string) => {
+    const aborter = this.aborters.get(id);
+    if (!aborter || this.state.runs[id]?.stopping) return;
+    this.setRun(id, { ...this.state.runs[id], stopping: true });
+    aborter.abort();
   };
 
   acknowledgeUnknown = (id: string) => {

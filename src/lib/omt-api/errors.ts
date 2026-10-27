@@ -10,6 +10,9 @@ export class ApiError extends Error {
   }
 }
 
+/** A documented backend JSON rejection before the SSE response was admitted. */
+export class RunAdmissionError extends ApiError {}
+
 export function errorMessage(error: unknown): string {
   return error instanceof ApiError ? error.message : "连接中断或服务不可达，请检查本机后端与代理。";
 }
@@ -30,7 +33,8 @@ export function readErrorMessage(error: unknown): string {
 export function classifyRunError(error: unknown): "rejected" | "needs_attention" | "unknown" {
   if (!(error instanceof ApiError)) return "unknown";
   if (["run_failed", "session_incomplete"].includes(error.code)) return "needs_attention";
-  if (["invalid_request", "session_not_found", "session_busy", "capacity_exceeded"].includes(error.code))
+  if (error instanceof RunAdmissionError) return "rejected";
+  if (["invalid_request", "session_not_found", "session_busy", "manager_busy", "capacity_exceeded", "runtime_not_ready", "manager_closed", "configuration_invalid"].includes(error.code))
     return "rejected";
   return "unknown";
 }

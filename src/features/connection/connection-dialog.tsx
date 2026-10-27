@@ -35,7 +35,7 @@ export function ConnectionDialog({ state, busy, onConnect, onDisconnect, onCheck
       event.preventDefault();
       if (await onConnect()) onClose();
     }}>
-      <p className="field-help">当前后端无需访问令牌。点击连接后读取会话列表，不会执行模型或工具。</p>
+      <p className="field-help">当前后端无需访问令牌。点击连接后检查运行状态；就绪后读取会话列表，不会执行模型或工具。</p>
       {state.connectionError && <p className="field-error" role="alert">{state.connectionError}</p>}
       <div className="privacy-note"><ShieldCheck size={18} /><span>仅供可信本机使用，请勿向公网或不可信网络开放。</span></div>
       <button ref={connectButton} className="button primary full-width" disabled={connecting} type="submit">{connecting ? "正在连接…" : "连接本机后端"}</button>

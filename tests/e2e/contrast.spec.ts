@@ -1,7 +1,12 @@
 import { expect, test, type Page } from "@playwright/test";
-import { completedRun, history, sessionA } from "../fixtures";
+import { completedRun, sseBody, history, sessionA } from "../fixtures";
+
+import { fulfillRuntime } from "./mock-runtime";
 
 test.use({ reducedMotion: "reduce" });
+test.beforeEach(async ({ page }) => {
+  await page.route("**/api/omt/**", async (route) => { if (!await fulfillRuntime(route)) await route.abort(); });
+});
 
 /** Measure resolved text colors against their composited CSS background. */
 async function expectReadable(page: Page, selector: string, pseudo?: "::placeholder") {
@@ -44,6 +49,7 @@ test("welcome, disabled composer and connection dialog keep readable contrast", 
   await page.goto("/");
   await expectReadable(page, ".welcome h1, .welcome h1 span, .welcome-description, .eyebrow, .suggestion-card > span:nth-child(2), .suggestion-card p, .welcome-link, .sidebar-empty, .section-heading > span, .brand-caption, .local-note strong, .local-note div > span, .connection-pill, .connection-button, .workspace-label, .current-title, .composer-bottom > span, .composer-disclaimer");
   await expectReadable(page, ".composer textarea", "::placeholder");
+  await expectReadable(page, ".runtime-select select, .runtime-scope-note, .model-config-button");
   await page.locator(".suggestion-card").first().hover();
   await expectReadable(page, ".suggestion-card > span:nth-child(2), .suggestion-card p");
   await page.getByRole("button", { name: "未连接" }).click();
@@ -59,9 +65,10 @@ test("welcome, disabled composer and connection dialog keep readable contrast", 
 
 test("session, message, tool and non-fatal warning text stay readable", async ({ page }) => {
   let completed = false;
-  await page.route("**/api/omt/**", (route) => {
+  await page.route("**/api/omt/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
-    if (path.endsWith("/runs")) { completed = true; return route.fulfill({ json: { ...completedRun, warnings: ["session_timestamp_update_failed"] } }); }
+    if (await fulfillRuntime(route)) return;
+    if (path.endsWith("/runs/stream")) { completed = true; return route.fulfill({ contentType: "text/event-stream", body: sseBody({ ...completedRun, warnings: ["session_timestamp_update_failed"] }) }); }
     if (path.endsWith("/messages")) return route.fulfill({ json: completed ? history : [] });
     return route.fulfill({ json: [sessionA] });
   });

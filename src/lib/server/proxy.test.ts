@@ -5,7 +5,7 @@ import { backendUrl, proxyRequest, type Forwarder } from "./proxy";
 function request(path: string, method = "GET", headers: Record<string, string> = {}) {
   return new Request("http://127.0.0.1:3000/api/omt/" + path, {
     method, headers: { "Content-Type": "application/json", ...headers },
-    ...(method === "POST" ? { body: JSON.stringify({ message: "hello" }) } : {}),
+    ...(["POST", "PUT"].includes(method) ? { body: JSON.stringify({ message: "hello" }) } : {}),
   });
 }
 function forward(status = 200, body = "[]") {
@@ -32,6 +32,13 @@ describe("local allowlisted proxy", () => {
   });
   it.each([
     { method: "GET", path: ["health"] },
+    { method: "GET", path: ["api", "v1", "runtime"] },
+    { method: "GET", path: ["api", "v1", "providers"] },
+    { method: "GET", path: ["api", "v1", "models"] },
+    { method: "POST", path: ["api", "v1", "model-logins"] },
+    { method: "POST", path: ["api", "v1", "model-logins", "p", "confirm"] },
+    { method: "PUT", path: ["api", "v1", "runtime", "model"] },
+    { method: "PUT", path: ["api", "v1", "runtime", "thinking"] },
     { method: "GET", path: ["api", "v1", "sessions"] },
     { method: "POST", path: ["api", "v1", "sessions"] },
     { method: "GET", path: ["api", "v1", "sessions", "s", "messages"] },
@@ -118,6 +125,31 @@ describe("local allowlisted proxy", () => {
     const body: unknown = await response.json();
     expect(body).toMatchObject({ error: { code: "proxy_unavailable", message: expect.stringContaining(feedback) } });
     if (method === "GET") expect(JSON.stringify(body)).not.toContain("执行结果可能不明");
+    expect(upstream).toHaveBeenCalledTimes(1);
+  });
+  it("forwards stream chunks without waiting for the whole body, and propagates cancellation", async () => {
+    let writer: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const cancelled = vi.fn();
+    const stream = new ReadableStream<Uint8Array>({ start(controller) { writer = controller; }, cancel: cancelled });
+    const text = vi.fn();
+    const upstream = vi.fn<Forwarder>().mockResolvedValue({ status: 200, headers: new Headers({ "Content-Type": "text/event-stream" }), body: stream, text });
+    const incoming = request("api/v1/sessions/s/runs/stream", "POST");
+    const response = await proxyRequest(incoming, ["api", "v1", "sessions", "s", "runs", "stream"], upstream);
+    expect(text).not.toHaveBeenCalled();
+    expect(response.headers.get("X-Accel-Buffering")).toBe("no");
+    expect(upstream.mock.calls[0][1].signal).toBe(incoming.signal);
+    expect(upstream.mock.calls[0][1].headers.Accept).toBe("text/event-stream");
+    const reader = response.body?.getReader();
+    writer?.enqueue(new TextEncoder().encode(": heartbeat\n\n"));
+    expect(new TextDecoder().decode((await reader?.read())?.value)).toBe(": heartbeat\n\n");
+    await reader?.cancel();
+    expect(cancelled).toHaveBeenCalledTimes(1);
+  });
+  it("leaves pre-admission streaming errors as HTTP JSON", async () => {
+    const upstream = forward(409, '{"error":{"code":"session_incomplete","message":"需检查"}}');
+    const response = await proxyRequest(request("api/v1/sessions/s/runs/stream", "POST"), ["api", "v1", "sessions", "s", "runs", "stream"], upstream);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: { code: "session_incomplete" } });
     expect(upstream).toHaveBeenCalledTimes(1);
   });
   it("preserves business error status and body", async () => {

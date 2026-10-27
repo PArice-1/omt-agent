@@ -1,6 +1,9 @@
-import type { MessageResponse, SessionResponse } from "@/lib/omt-api/contracts";
+import type { MessageResponse, SessionResponse, ThinkingResponse } from "@/lib/omt-api/contracts";
 
-export type RunPhase = "idle" | "sending" | "completed" | "rejected" | "needs_attention" | "unknown";
+export type RunPhase = "idle" | "sending" | "completed" | "rejected" | "needs_attention" | "failed" | "cancelled" | "unknown";
+export type StreamItem =
+  | { kind: "assistant"; id: string; text: string; reasoning: string; completed: boolean }
+  | { kind: "tool"; id: string; name: string; input?: unknown; deltas: unknown[]; result?: unknown; status: "running" | "success" | "error" };
 export interface RunState {
   phase: RunPhase;
   message?: string;
@@ -9,6 +12,10 @@ export interface RunState {
   runId?: string;
   warnings?: string[];
   reviewed?: boolean;
+  receiving?: boolean;
+  stopping?: boolean;
+  thinking?: ThinkingResponse | null;
+  items?: StreamItem[];
 }
 export interface HistoryState {
   status: "loading" | "ready" | "error";

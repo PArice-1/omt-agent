@@ -1,13 +1,16 @@
 import { expect, test } from "@playwright/test";
-import { completedRun, history, sessionA } from "../fixtures";
+import { sseBody, history, sessionA } from "../fixtures";
+
+import { fulfillRuntime } from "./mock-runtime";
 
 test("a failed post-run list refresh can be dismissed and checked without rerunning", async ({ page }) => {
   let completed = false;
   let listReads = 0;
   let runs = 0;
-  await page.route("**/api/omt/**", (route) => {
+  await page.route("**/api/omt/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
-    if (path.endsWith("/runs")) { runs += 1; completed = true; return route.fulfill({ json: completedRun }); }
+    if (await fulfillRuntime(route)) return;
+    if (path.endsWith("/runs/stream")) { runs += 1; completed = true; return route.fulfill({ contentType: "text/event-stream", body: sseBody() }); }
     if (path.endsWith("/messages")) return route.fulfill({ json: completed ? history : [] });
     listReads += 1;
     return listReads === 2 ? route.fulfill({ status: 502, json: { error: { code: "proxy_unavailable", message: "legacy execution warning" } } })

@@ -1,8 +1,10 @@
 import { expect, test } from "@playwright/test";
 import type { MessageResponse } from "../../src/lib/omt-api/contracts";
-import { completedRun, sessionA } from "../fixtures";
+import { completedRun, sseBody, sessionA } from "../fixtures";
 
-test("sending and new output scroll to the latest message even after reading older history", async ({ page }) => {
+import { fulfillRuntime } from "./mock-runtime";
+
+test("sending resumes following, but later output/history never steal the upward reading position", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   const previous: MessageResponse[] = Array.from({ length: 35 }, (_, index) => ({
     role: "assistant", text: `历史段落 ${index + 1}\n\n这是一段已有历史，用于验证滚动位置。`, tool_calls: [],
@@ -16,11 +18,12 @@ test("sending and new output scroll to the latest message even after reading old
   const historyGate = new Promise<void>((resolve) => { releaseHistory = resolve; });
   await page.route("**/api/omt/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
-    if (path.endsWith("/runs")) {
+    if (await fulfillRuntime(route)) return;
+    if (path.endsWith("/runs/stream")) {
       runs += 1;
       await runGate;
       completed = true;
-      return route.fulfill({ json: { ...completedRun, answer } });
+      return route.fulfill({ contentType: "text/event-stream", body: sseBody({ ...completedRun, answer }) });
     }
     if (path.endsWith("/messages")) {
       if (!completed) return route.fulfill({ json: previous });
@@ -46,13 +49,12 @@ test("sending and new output scroll to the latest message even after reading old
     await expect.poll(bottomDistance).toBeLessThanOrEqual(3);
     await scrollUp();
     releaseRun();
-    await expect(page.getByText("最新输出结束", { exact: true })).toBeInViewport();
-    await expect.poll(bottomDistance).toBeLessThanOrEqual(3);
-    await scrollUp();
+    await expect(page.getByText("最新输出结束", { exact: true })).toHaveCount(1);
+    await expect.poll(() => scroller.evaluate((element) => element.scrollTop)).toBe(0);
     releaseHistory();
     await expect(page.getByRole("textbox", { name: "消息" })).toBeEnabled();
-    await expect(page.getByText("最新输出结束", { exact: true })).toBeInViewport();
-    await expect.poll(bottomDistance).toBeLessThanOrEqual(3);
+    await expect(page.getByText("最新输出结束", { exact: true })).toHaveCount(1);
+    await expect.poll(() => scroller.evaluate((element) => element.scrollTop)).toBe(0);
     await expect(page.getByText("本轮已完成", { exact: true })).toHaveCount(0);
     await scrollUp();
     await page.getByRole("button", { name: "本机已连接" }).click();
