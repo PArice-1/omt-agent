@@ -6,7 +6,23 @@ from pathlib import Path
 from pydantic import Field, SecretStr
 from pydantic_settings import SettingsConfigDict
 
-from omt.core.configuration import SessionSettings
+from omt.core.configuration import McpServerSettings, SessionSettings, StdioServerSettings
+
+
+def _default_mcp_servers() -> dict[str, McpServerSettings]:
+    """本机测试用的默认 knowledge 服务；仅 API 使用，环境变量可覆盖或以 {} 关闭。"""
+    # 与本机 CLI 使用相同服务和存储；启动运行环境时会先增量构建知识库。
+    root = Path("/home/laterain/Projects/Agent/rag-mcp")
+    source = Path("/home/laterain/.omt/knowledge-database")
+    return {"knowledge": StdioServerSettings(
+        transport="stdio", command=str(root / ".venv" / "bin" / "python"),
+        args=[
+            "-m", "rag_mcp.mcp.server", "--build-on-start",
+            "--source", str(source), "--db-path", str(source / "storage"),
+            "--collection", "knowledge",
+        ],
+        cwd=str(root),
+    )}
 
 
 class ApiSettings(SessionSettings):
@@ -18,6 +34,7 @@ class ApiSettings(SessionSettings):
     # 当前仅可信本机使用，access_token 保留兼容但不启用鉴权。
     skill_roots: list[Path] | None = Field(default=[Path("~/.agents/skills").expanduser().resolve()])
     access_token: SecretStr = Field(default_factory=lambda: SecretStr(""))
+    mcp_servers: dict[str, McpServerSettings] = Field(default_factory=_default_mcp_servers)
 
     # SSE 单条/积压按编码后字节计量；到达上限中止，不截断正文。
     stream_buffer_events: int = Field(default=256, ge=1)

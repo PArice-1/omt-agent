@@ -32,7 +32,7 @@ uv run omt-api
 | `WORKSPACE_PATH` | 启动 cwd，必须与实际目录一致，不是沙箱 |
 | `MAX_CONCURRENT_RUNS` | `1`，正整数；满载立即 429，不排队，不限制图内部工具并发 |
 | `SKILL_ROOTS` | `["~/.agents/skills"]`；JSON 数组替换，`[]` 关闭发现 |
-| `MCP_SERVERS` | `{}`；可信管理员配置，不接受请求修改 |
+| `MCP_SERVERS` | 本机测试默认 `knowledge` stdio 服务；JSON 对象可替换，`{}` 关闭；不接受请求修改 |
 | `STREAM_BUFFER_EVENTS` | `256`，正整数；积压业务事件数上限 |
 | `STREAM_BUFFER_BYTES` | `1048576`，至少 1024；积压编码后字节数及单条事件上限 |
 | `STREAM_SEND_TIMEOUT` | `30.0` 秒，正数；单次 ASGI 发送等待上限，不是整轮运行超时 |
@@ -41,6 +41,10 @@ uv run omt-api
 | `LOGIN_PREVIEW_LIMIT` | `8`，正整数；已生成及查询中的预览共用名额 |
 
 SSE 缓冲不包含底层 SDK/图流自己的内部缓冲，不是整个进程的内存限制。网络中正在发送的一条事件和单独终态也有有限的额外占用。超限时终止本轮，不截断或静默丢弃正文。
+
+API 为本机测试在 [api/settings.py](../src/omt/api/settings.py) 的 `_default_mcp_servers()` 中默认启用 `knowledge`：使用 `/home/laterain/Projects/Agent/rag-mcp/.venv/bin/python -m rag_mcp.mcp.server`，通过 `--build-on-start` 对 `/home/laterain/.omt/knowledge-database` 增量构建，存储位于其 `storage` 子目录，集合为 `knowledge`。路径不适用于其他机器时，应先修改或用 `OMT_API_MCP_SERVERS='{}'` 关闭。该环境变量只影响 API，不影响 CLI。
+
+CLI 与 API 指向同一本地存储时，不要同时运行两者的 MCP 构建或连接，以免争用 Qdrant 存储锁。仅创建配置对象不会启动服务；运行环境初始化时才会发现 MCP 工具。
 
 MCP 支持 stdio 和 streamable_http，连接参数见[架构说明](architecture.md)。例如：
 

@@ -145,7 +145,7 @@ PY
 ### 4. 启动 TUI
 
 ```bash
-# 默认全屏 TUI，不启动 MCP；缺少模型配置时提示 F2 / /login。
+# 默认全屏 TUI，使用 CLI 本机测试 MCP 配置；缺少模型配置时提示 F2 / /login。
 uv run omt
 # 可选：保留原逐行交互
 uv run omt --plain
@@ -185,7 +185,7 @@ uv run omt --plain
 uv run --project /absolute/path/to/OMT omt
 ```
 
-如需 MCP，请显式设置 `OMT_CLI_MCP_SERVERS`，不再内置开发者本机路径。更多交互与失败处理约定见 [CLI 使用说明](docs/cli.md)。
+CLI/TUI 暂时在 `src/omt/cli/settings.py` 内置本机测试用 `knowledge` MCP；请按本机情况修改 `_default_mcp_servers()`，或用 `OMT_CLI_MCP_SERVERS` 替换配置、设为 `'{}'` 关闭。更多交互与失败处理约定见 [CLI 使用说明](docs/cli.md)。
 
 ## HTTP API
 
@@ -196,7 +196,7 @@ uv run --project /absolute/path/to/OMT omt
 uv run omt-api
 ```
 
-默认监听 `127.0.0.1:8000`，使用单 worker。API 默认不启用 MCP；当前已暂时停用访问令牌校验，即使配置令牌也不会自动恢复认证。DeepSeek 等认证厂商仍需配置模型 Key，Ollama 无需。后端及前端代理均只应面向可信本机使用，不要向不可信网络开放。
+默认监听 `127.0.0.1:8000`，使用单 worker。API 也在 `src/omt/api/settings.py` 默认启用本机测试 `knowledge` MCP，可用 `OMT_API_MCP_SERVERS='{}'` 关闭；与 CLI 共用本地 MCP 存储时不要同时启动，以免争用存储锁；当前已暂时停用访问令牌校验，即使配置令牌也不会自动恢复认证。DeepSeek 等认证厂商仍需配置模型 Key，Ollama 无需。后端及前端代理均只应面向可信本机使用，不要向不可信网络开放。
 
 先通过 `GET /api/v1/runtime` 确认 ready=true；未就绪时按 API 文档完成配置。就绪后可以检查服务并创建会话：
 

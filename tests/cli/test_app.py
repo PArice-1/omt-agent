@@ -12,6 +12,7 @@ import pytest
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from pydantic import ValidationError
 
 from omt.agent.agent import Agent
 from omt.cli.app import main
@@ -130,10 +131,41 @@ def test_cli_skill_roots_use_user_default_or_explicit_configuration(
     assert [root.resolve() for root in roots] == expected
 
 
-def test_cli_mcp_is_disabled_by_default_and_explicit_servers_are_supported(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cli_mcp_uses_local_default_without_api_override(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("OMT_CLI_MCP_SERVERS")
-    assert CliSettings().mcp_servers == {}
-    monkeypatch.setenv("OMT_CLI_MCP_SERVERS", '{"local": {"transport": "stdio", "command": "fake-server"}}')
-    connection = CliSettings().mcp_servers["local"].connection()
-    assert connection["transport"] == "stdio"
-    assert connection["command"] == "fake-server"
+    monkeypatch.setenv("OMT_API_MCP_SERVERS", "{}")
+    servers = CliSettings().mcp_servers
+    assert set(servers) == {"knowledge"}
+    root = Path("/home/laterain/Projects/Agent/rag-mcp")
+    assert servers["knowledge"].connection() == {
+        "transport": "stdio", "command": str(root / ".venv" / "bin" / "python"),
+        "args": [
+            "-m", "rag_mcp.mcp.server", "--build-on-start",
+            "--source", "/home/laterain/.omt/knowledge-database",
+            "--db-path", "/home/laterain/.omt/knowledge-database/storage",
+            "--collection", "knowledge",
+        ],
+        "cwd": str(root), "env": None,
+    }
+
+
+@pytest.mark.parametrize("disabled", [False, True])
+def test_cli_mcp_environment_replaces_or_disables_default(
+    monkeypatch: pytest.MonkeyPatch, disabled: bool,
+) -> None:
+    value = "{}" if disabled else '{"local": {"transport": "stdio", "command": "fake-server"}}'
+    monkeypatch.setenv("OMT_CLI_MCP_SERVERS", value)
+    servers = CliSettings().mcp_servers
+    if disabled:
+        assert servers == {}
+    else:
+        assert set(servers) == {"local"}
+        connection = servers["local"].connection()
+        assert connection["transport"] == "stdio"
+        assert connection["command"] == "fake-server"
+
+
+def test_cli_mcp_invalid_environment_does_not_fall_back_to_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OMT_CLI_MCP_SERVERS", '{"local": {"transport": "stdio", "command": ""}}')
+    with pytest.raises(ValidationError):
+        _ = CliSettings()

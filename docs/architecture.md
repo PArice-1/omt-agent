@@ -68,7 +68,7 @@ CLI 和 HTTP 默认都通过 `bootstrap.open_session_runtime(options)`，由 Ses
 
 `run_cli(manager_factory=...)` 和 `OmtApp(runtime_factory=...)` 可注入固定 Manager，此时不读取额外模型配置，不支持运行中切换；也可注入提供 SessionRuntime 的异步工厂。调用方应每次通过 runtime.manager 取得最新实例，不再使用切换前的引用。
 
-SessionSettings 共享 db_path、workspace_path、max_concurrent_runs、skill_roots、mcp_servers。ApiSettings 使用 OMT_API_，当前访问令牌字段可不配置且不校验长度，路由也不执行鉴权；配置令牌不会自动恢复认证。CliSettings 使用 OMT_CLI_，不要求也不读取 HTTP 令牌。两者默认数据库均为 ~/.omt/agent/state/omt.sqlite。当前 CliSettings 和 ApiSettings 均显式将 skill_roots 默认为 ~/.agents/skills；只有使用共用 SessionSettings 且保留 skill_roots=None 时，bootstrap 才回退到 ~/.omt/agent/skills 与 cwd/skills。CLI/API 默认 MCP 均为空；不再内置开发者本机 knowledge 路径，需要的部署通过各自的 MCP_SERVERS 环境变量显式配置。模型的三份 JSON 配置仍由 settings.py 读取，与这些启动选项不同。
+SessionSettings 共享 db_path、workspace_path、max_concurrent_runs、skill_roots、mcp_servers。ApiSettings 使用 OMT_API_，当前访问令牌字段可不配置且不校验长度，路由也不执行鉴权；配置令牌不会自动恢复认证。CliSettings 使用 OMT_CLI_，不要求也不读取 HTTP 令牌。两者默认数据库均为 ~/.omt/agent/state/omt.sqlite。当前 CliSettings 和 ApiSettings 均显式将 skill_roots 默认为 ~/.agents/skills；只有使用共用 SessionSettings 且保留 skill_roots=None 时，bootstrap 才回退到 ~/.omt/agent/skills 与 cwd/skills。CLI/TUI 为本机测试在 cli/settings.py 的 _default_mcp_servers 中默认配置 knowledge stdio 服务（/home/laterain/Projects/Agent/rag-mcp）；OMT_CLI_MCP_SERVERS 可替换，{} 关闭。API 在 api/settings.py 中独立配置同一个本机测试服务，使用 rag_mcp.mcp.server、--build-on-start，源目录为 /home/laterain/.omt/knowledge-database，存储为其 storage 子目录，集合为 knowledge；OMT_API_MCP_SERVERS 可替换或以 {} 关闭，不读取 CLI 环境变量。两入口不应同时启动使用相同本地 Qdrant 存储的 MCP，以免争用存储锁。共用 SessionSettings 默认 MCP 仍为空。模型的三份 JSON 配置仍由 settings.py 读取，与这些启动选项不同。
 
 ### 默认 TUI 交互
 

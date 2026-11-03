@@ -18,7 +18,9 @@
 | 多轮执行与展示 | 两轮普通输入再 EOF，真实 Manager + SQLite + 假模型 | 索引仅一条、目录正确、标题为首条前 10 字符；每个回答输出一次、系统规则不打印，重新打开 Saver 能读回两轮原文与回答 | test_cli_multiturn_uses_manager_without_duplicate_output |
 | 登记失败重试 | 首次 insert_session 抛 SQLite 错误，后续恢复真实写入 | 首次提示本轮未执行，失败输入不进入检查点；第二次输入登记一条并执行成功 | test_cli_registration_failure_can_retry_without_executing_first_input |
 | 前缀独立 | 设置 OMT_API_MAX_CONCURRENT_RUNS=8、OMT_CLI_MAX_CONCURRENT_RUNS=2 | CLI 并发上限为 2、MCP 为空，不含 access_token | test_cli_and_api_configuration_are_independent |
-| 可移植 MCP 默认值 | 未配置 CLI MCP，再显式配置本地服务 | 默认无 MCP，不依赖开发者本机路径；显式 stdio 配置仍可解析，不连接服务器 | test_cli_mcp_is_disabled_by_default_and_explicit_servers_are_supported |
+| 本机测试 MCP 默认值 | 删除 CLI MCP 覆盖，设置 API MCP 为 {} | CLI 仍只有 knowledge，command、cwd、rag_mcp.mcp.server 模块、--build-on-start、knowledge-database 源目录及其 storage 路径和集合参数与当前本机配置一致；仅解析，不连接服务 | test_cli_mcp_uses_local_default_without_api_override |
+| MCP 覆盖与关闭 | CLI 环境变量配置 fake-server 或 {} | 完整替换默认 knowledge，或得到空字典以关闭 MCP | test_cli_mcp_environment_replaces_or_disables_default |
+| MCP 非法配置 | stdio command 为空 | 抛 ValidationError，不静默回退并启用默认服务 | test_cli_mcp_invalid_environment_does_not_fall_back_to_default |
 | 临时 Skills 隔离 | 共享 fixture 生效后构造 CliSettings | skill_roots 精确等于 tmp_path/skills，不落回真实用户目录；只解析设置，不扫描文件 | test_cli_fixture_uses_only_temporary_skill_roots |
 | Skills 配置选择 | default 删除 CLI 覆盖；custom 设置相对目录；disabled 设置 []；另设置 API 的无关目录 | 分别得到 ~/.agents/skills、当前临时目录下的 custom-skills、空列表；API 前缀不影响 CLI，默认目录只解析不扫描 | test_cli_skill_roots_use_user_default_or_explicit_configuration |
 | 完整默认组装 | 临时模型 JSON（显式选择 high 并映射到 high）、预建库、文件与 Skill；参数 skills_enabled 分别开启临时目录和显式关闭；假模型真实调用 read 后继续第二轮 | 经过 bootstrap/Manager/Conversation 与真实同步 read；SDK 替身收到 reasoning_effort=high 及 enabled thinking；启用时系统消息包含临时 Skill 元数据但无正文，关闭时不含 Skills 目录；回答/工具结果可见、假 Key 不显示；重开数据库后系统消息唯一、两轮与工具结果无重复 | test_cli_runs_manager_and_read_tool_without_network |
@@ -49,10 +51,10 @@ CLI/API 共用 Manager 的补充集成场景在 [test_api.py](../../tests/api/te
 
 ## 隔离方式
 
-- [conftest.py](../../tests/cli/conftest.py) 隔离 cwd、settings.root 和 OMT_CLI_/OMT_API_ 环境，前后清空设置缓存。测试显式使用 OMT_CLI_MCP_SERVERS={} 禁止服务器；默认配置解析用例删除变量并确认默认仍为空，不启动连接。
+- [conftest.py](../../tests/cli/conftest.py) 隔离 cwd、settings.root 和 OMT_CLI_/OMT_API_ 环境，前后清空设置缓存。测试显式使用 OMT_CLI_MCP_SERVERS={} 禁止服务器；默认配置专项删除变量并核对本机 knowledge 的连接参数，只解析配置，不启动连接或读取服务目录。
 - 默认 Skills 搜索通过 OMT_CLI_SKILL_ROOTS 显式覆盖为 tmp_path/skills。CliSettings 的 ~/.agents/skills 默认值在导入时展开，仅改变 HOME、cwd 或 settings.root 不能隔离，因此不再依赖旧的项目 Skills 自动发现行为。配置默认值专项只解析路径、不启动会话；完整链路分别验证临时目录启用和 [] 禁用，不放宽原有 Skill 元数据、正文隔离和历史断言。
 - 数据库、文件、Skill、三份模型配置和假 Key 均在 tmp_path。所有数据库由测试显式建表，图和 AsyncSqliteSaver 真实运行，不读取用户数据。
-- 无模型时的 /login 提示、运行中添加模型、隐藏输入与无历史保证见[模型登录测试](model-login.md)。CLI 不再承担 JSON 读写或厂商目录协议。旧本机 MCP 默认值改为显式配置，防止下载后因开发者路径不存在而启动失败；不再保留旧默认值预期。
+- 无模型时的 /login 提示、运行中添加模型、隐藏输入与无历史保证见[模型登录测试](model-login.md)。CLI 不再承担 JSON 读写或厂商目录协议。本机测试按需求恢复 CLI 默认 knowledge；后续本机配置改为 rag_mcp.mcp.server 并增加启动构建与源/存储路径参数，默认值专项同步完整参数断言。因此共享 fixture 必须继续显式关闭 MCP，默认值专项不启动运行环境，避免依赖真实本机服务。
 - 默认 PromptSession 用替身避免占用用户终端；输入专项使用真实 PromptSession + pipe + DummyOutput，不需要 TTY。
 - 普通入口测试注入只装本地假模型的固定 Manager 工厂；完整链路仅替换 SDK 初始化，保留默认 bootstrap.open_session_runtime、当前 Manager 和内置 read，不访问模型/MCP 网络。
 - 等待测试使用 Event、超时及 finally 清理；SIGINT 仅作用于测试创建的子进程，设定临时 cwd、继承隔离后的假配置变量、关闭 stdin 并有超时回收。子进程注入本地工厂，不读取真实认证。

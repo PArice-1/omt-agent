@@ -69,6 +69,7 @@ def isolate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
                  "OMT_API_MCP_SERVERS", "OMT_API_SKILL_ROOTS", "OMT_API_MAX_CONCURRENT_RUNS",
                  "defaultProvider", "defaultModel"):
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("OMT_API_MCP_SERVERS", "{}")
     yield
     settings_module.load_settings.cache_clear()
 
@@ -425,6 +426,36 @@ def test_default_lifespan_builds_dependencies_once_and_cleans_up(
     assert response.json()["error"]["code"] == "manager_closed"
 
 
+def test_api_mcp_uses_local_default_without_cli_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OMT_API_MCP_SERVERS")
+    monkeypatch.setenv("OMT_CLI_MCP_SERVERS", "{}")
+    servers = ApiSettings().mcp_servers
+    assert set(servers) == {"knowledge"}
+    root = Path("/home/laterain/Projects/Agent/rag-mcp")
+    source = Path("/home/laterain/.omt/knowledge-database")
+    assert servers["knowledge"].connection() == {
+        "transport": "stdio", "command": str(root / ".venv" / "bin" / "python"),
+        "args": [
+            "-m", "rag_mcp.mcp.server", "--build-on-start",
+            "--source", str(source), "--db-path", str(source / "storage"),
+            "--collection", "knowledge",
+        ],
+        "cwd": str(root), "env": None,
+    }
+
+
+def test_api_mcp_environment_can_disable_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OMT_API_MCP_SERVERS", "{}")
+    monkeypatch.setenv("OMT_CLI_MCP_SERVERS", '{"local": {"transport": "stdio", "command": "fake-server"}}')
+    assert ApiSettings().mcp_servers == {}
+
+
+def test_api_mcp_invalid_environment_does_not_fall_back_to_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OMT_API_MCP_SERVERS", '{"local": {"transport": "stdio", "command": ""}}')
+    with pytest.raises(ValidationError):
+        _ = ApiSettings()
+
+
 def test_mcp_configuration_is_explicit_and_secrets_are_not_rendered(
     options: ApiSettings, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -435,6 +466,7 @@ def test_mcp_configuration_is_explicit_and_secrets_are_not_rendered(
                  "headers": {"Authorization": "test-only-private-header"}},
     }))
     configured = ApiSettings()
+    assert set(configured.mcp_servers) == {"http"}
     connection = configured.mcp_servers["http"].connection()
     assert connection["transport"] == "streamable_http"
     assert isinstance(configured.mcp_servers["http"], HttpServerSettings)
