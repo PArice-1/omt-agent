@@ -1,10 +1,12 @@
 # OMT Frontend
 
+本模块位于 monorepo 的 `frontend/`。以下模块级命令在本目录执行，统一安装与启动见 [仓库首页](../README.md)，专题文档见 [统一导航](../docs/README.md)。
+
 一个基于 **Next.js + TypeScript** 的本机 Agent 前端。浅蓝色界面，提供模型配置、全局运行设置、SSE 增量聊天、独立 reasoning、工具记录和明确的执行反馈。
 
-![浅蓝色首页预览](docs/images/workspace.png)
+![浅蓝色首页预览](../docs/frontend/images/workspace.png)
 
-[查看窄屏界面](docs/images/workspace-mobile.png)
+[查看窄屏界面](../docs/frontend/images/workspace-mobile.png)
 
 > 第一版只面向可信本机、单用户环境。不是面向公网的部署方案，也不包含独立的模型后端。
 
@@ -15,7 +17,7 @@
 - 已运行的 OMT HTTP 后端（支持 runtime 配置与 OMT v1 SSE），默认地址 `http://127.0.0.1:8000`；未配置模型也可以启动
 - 当前后端无需访问令牌；厂商模型 API Key 可通过前端密码框提交给本机后端进行预览，明确确认后才保存
 
-后端接口和操作限制见 [前端接入契约](docs/frontend-api.md)。其中指向后端配置、源码和测试的链接属于后端仓库，不一定存在于本项目。
+后端接口和操作限制见 [前端接入契约](../docs/omt/frontend-api.md)。文档中的后端源码、配置与测试均可在同一 monorepo 中找到。
 
 ## 开发启动
 
@@ -122,7 +124,7 @@ Playwright 使用 3100 端口启动生产构建，测试结束会关闭服务。
 
 ## 代码与扩展
 
-先阅读 [架构文档](docs/architecture.md)，再阅读对应代码：
+先阅读 [架构文档](../docs/frontend/architecture.md)，再阅读对应代码：
 
 | 路径 | 职责 |
 | --- | --- |

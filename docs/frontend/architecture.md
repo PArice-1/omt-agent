@@ -1,9 +1,11 @@
 # OMT Frontend 架构
 
+本文中的模块级命令在仓库的 `frontend/` 目录执行；根目录命令见 [开发说明](../development.md).
+
 ## 目标与状态
 第一版面向可信本机、单用户，采用 Next.js App Router + TypeScript strict。
 用户确认浅蓝色、简洁美观的界面；当前按无认证契约连接，无令牌输入、保存或登录流程。
-本文件描述已实现的结构与行为，包含运行配置、模型切换及 OMT v1 SSE。接口事实以 [frontend-api.md](frontend-api.md) 为准；该文件是后端文档的软链接，不在前端仓库中修改其内容。
+本文件描述已实现的结构与行为，包含运行配置、模型切换及 OMT v1 SSE。接口事实以 [frontend-api.md](../omt/frontend-api.md) 为准；该文件集中维护于 docs/omt，前后端共同引用，同步接口变更时核对实际后端实现。
 
 ## 模块导航与依赖
 ```
@@ -82,7 +84,7 @@ Composer 使用 controls/settingsFeedback 插槽组合运行设置，不绑定�
 - React Testing Library + MSW：真实 API 客户端下的连接、创建、发送、历史替换、异常状态与安全渲染；在 Strict Mode 下验证页面初始化仅探测 runtime/目录、会话接入仍显式触发，且获取预览不会自动确认保存。
 - 代理冒烟测试：实际构建的 Next.js + 随机端口本机 HTTP 替身，验证请求来源、编码 ID、配置 GET/POST/PUT、无认证访问、凭据过滤，以及响应在 EOF 前即交付 SSE、下游中止能关闭上游且无 POST 重试。测试进程结束后关闭服务。
 - Playwright：使用路由 mock 的真实浏览器关键流程与窄屏布局，不连接真实后端。`feedback.spec.ts` 复现执行成功后列表刷新失败、关闭提示和只读检查；`scroll.spec.ts` 覆盖发送时恢复跟随，以及向上阅读后输出、完成、完整历史同步和普通弹窗更新不抢走阅读位置。浏览器可执行性依赖本机 Chromium 系统库；不能以 DOM/mock 测试替代实际浏览器通过声明。
-- lint、tsc、Next build 是交付检查；启动和命令见 [README](../README.md)。
+- lint、tsc、Next build 是交付检查；启动和命令见 [README](../../frontend/README.md)。
 
 ## 扩展方式
 - 新增接口：先更新经过确认的契约文档，再增加 schema、OmtClient 方法及测试，随后接入对应功能。
