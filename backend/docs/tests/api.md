@@ -1,0 +1,63 @@
+# HTTP 与 SessionManager 测试说明
+
+## 对象与目的
+
+- 源码：[api/](../../src/omt/api/)、[session_manager.py](../../src/omt/core/session_manager.py)、[bootstrap.py](../../src/omt/core/bootstrap.py)。
+- 测试：[test_api.py](../../tests/api/test_api.py)。
+- 验证 HTTP Interface 的可观察响应、真实 SQLite 历史恢复、会话隔离与失败清理；不以 mock 写入或内部方法调用次数替代执行结果。CLI 入口见 [CLI 测试](cli.md)，共用组装见[配置测试](session-and-config.md)，事件与静默执行见 [Conversation 测试](conversation.md)。
+
+## 场景
+
+| 场景 | 输入 / 前置条件 | 预期结果 | 对应测试 |
+| --- | --- | --- | --- |
+| 免认证业务接口 | 未配置或保留旧令牌，分别不带请求头、带旧令牌、错误 Bearer 或 Basic 头；本地假模型完成一轮 | 四个会话接口均正常返回，历史包含本轮问答；配置令牌不自动恢复鉴权 | test_http_sessions_do_not_require_bearer |
+| 输入与公开文档 | 空白、NUL、超长、非字符串消息；额外 workspace 字段；访问 health、docs、redoc、openapi.json | 非法输入 422，不产生会话或调用模型，不回显 input；health 及文档端点无需认证且可访问 | test_http_input_validation_and_health |
+| 完整工具回合与跨应用继续 | 假模型调用本地工具，返回 artifact 和元数据；新建应用、Manager 与 Saver 后继续旧 ID | 200 仅返回最终回答；历史包含工具关联但无系统消息/artifact/元数据；两轮不重复上下文；索引标题不变、修改时间刷新；终端无过程打印 | test_http_multiturn_restart_empty_session_and_history_projection |
+| 空会话跨应用首轮 | 只创建索引，不执行；重新打开应用 | 读取历史为空，重启后能开始首轮，不把无检查点误判为未完成历史 | 同上 |
+| 不存在、跨目录和未完成 | 临时库包含其他目录记录，以及 HumanMessage 结尾的真实检查点 | 列表过滤目录，跨目录及不存在返回 404；未完成返回 409，不调用模型 | test_http_missing_foreign_and_incomplete_sessions |
+| 工具失败和存储错误 | 工具抛带测试私有标记的异常；随后删除临时 sessions 表 | 执行 502 带 run_id，不暴露原文；同会话重试 409；列表存储错误 503，不暴露 SQL/路径 | test_http_errors_are_sanitized_and_failed_run_is_not_retried |
+| 完成后更新时间失败 | 工具/模型执行正常，只让 Store 更新时间抛 SQLite 异常 | 200 completed 保留回答与已提交历史，warnings 明确部分失败，不诱导重跑 | test_timestamp_failure_returns_completed_with_warning |
+| 同会话互斥、全局容量 | 异步工具等待期间对同/不同 ID 再次运行；全局上限分别为 1、2 | 同 ID session_busy；满载 capacity_exceeded；上限 2 时其他会话独立完成，不混入第一会话消息 | test_manager_concurrency_cancellation_and_shutdown |
+| 取消与关闭 | 取消等待工具的任务，或调用 Manager.aclose | 工具 finally 执行，任务终止，容量释放；关闭后拒绝新运行，检查点连接在 Manager 清理后退出 | 同上 |
+| 可选访问令牌 | 不提供令牌，或显式提供空字符串、空白、短令牌及旧格式令牌 | 配置均可创建，保留配置原值但 repr 不暴露非空白令牌；仅保留字段兼容，不启用认证 | test_settings_accept_optional_access_token |
+| 未配置启动及初始化失败 | 无配置且数据库缺失，或完整假配置但数据库缺失/缺表；另有错误 cwd 和假令牌环境变量 | 无配置可查状态且会话接口 503；初始化失败保留配置入口，不创建空库、不修复缺表；错误 cwd 仍拒绝启动，令牌可读 | test_settings_and_unconfigured_startup |
+| 默认 lifespan 共用组装 | 临时假 settings，SDK 包装对象/MCP 发现为替身，真实默认 bootstrap/Store/Agent/Saver | 应用工厂创建时无模型/MCP 副作用；两轮成功且每个 lifespan 只初始化一次模型/发现；退出后业务请求 503 | test_default_lifespan_builds_dependencies_once_and_cleans_up |
+| API 本机 MCP 默认值 | 删除 API MCP 环境变量，同时 CLI 设置 {} | API 仍只有 knowledge，Python、模块、构建参数、源目录、存储目录和集合与本机默认一致；仅解析，不启动服务 | test_api_mcp_uses_local_default_without_cli_override |
+| API MCP 显式关闭 | API 设置 {}，CLI 配置假服务 | API 得到空字典，不受 CLI 前缀影响 | test_api_mcp_environment_can_disable_default |
+| API MCP 非法配置 | API stdio command 为空 | 抛 ValidationError，不回退到默认服务 | test_api_mcp_invalid_environment_does_not_fall_back_to_default |
+| MCP 配置和敏感值 | 环境变量提供测试 HTTP MCP 配置，短测试令牌可读取，非法 max_concurrent_runs=0 触发校验失败 | 显式 HTTP 配置完整替换默认 knowledge 并转换为正确 Connection；repr/格式化异常不回显测试令牌及 header，不因免认证取消其他配置校验 | test_mcp_configuration_is_explicit_and_secrets_are_not_rendered |
+
+需求调整说明：当前本机分支已停用令牌长度校验和路由鉴权，并开放 Swagger/OpenAPI，因此原 401、缺令牌启动失败和 docs 404 预期不再适用。测试改为验证匿名调用四个业务接口和可选令牌配置，同时保留消息校验、工作目录拒绝及敏感信息保护。API 对缺配置/缺库/缺表改为保留配置入口并报告未就绪；底层 bootstrap 的严格预建库检查不变；不以删除或跳过失败用例代替契约更新。
+
+同会话/全局并发通过公开 Manager Interface 和 asyncio.Event 验证，避免用线程睡眠猜测请求时序。HTTP 层的 409 在失败重试及不完整检查点场景验证；容量错误的映射为固定 429，尚未通过并发真实网络请求验证。
+
+## CLI/HTTP 共用回归
+
+test_cli_and_http_share_one_manager_without_leaking_terminal_output 使用同一事件循环和 Manager：HTTP 创建空会话，CLI /resume 后执行一轮，再由 HTTP 追加。预期同一 ID 的用户/助手四条消息完整且无重复；CLI 回答只打印一次，后续 HTTP 回答没有终端输出。它验证单轮事件回调隔离与共用历史规则，不验证两个独立进程共享锁。
+
+共用配置类型来自 core.configuration。默认 lifespan 现在由 ApiRuntime 委托 bootstrap.open_session_runtime，支持未配置状态和可切换模型；原组装测试补齐三份假配置，继续验证每次生命周期仅初始化一次、MCP/系统提示词及退出清理。注入 manager_factory 的原 JSON/共享 CLI 测试仍验证固定 Manager 兼容，不读取模型配置。首次配置、SSE 与 HTTP 切换另见[运行配置与流式测试](api-runtime-streaming.md)。
+
+## 隔离方式
+
+- 模块级自动 fixture 将 cwd、settings.root 指向 tmp_path，前后清理模型设置缓存，移除本组使用的宿主配置环境变量，并用 OMT_API_MCP_SERVERS={} 显式关闭本机默认服务。仅默认值专项删除该变量，只解析参数，不访问服务目录或建立连接。所有数据库均由测试显式建表，不读取本机配置或凭据。
+- 本机测试需求使 API 从默认无 MCP 改为默认 knowledge；覆盖、关闭和非法参数用例防止误连默认服务，真实 MCP 构建及存储锁不属于本组离线测试。
+- HTTP 使用 TestClient，不监听端口；LangGraph 图、Conversation、SessionStore、AsyncSqliteSaver 使用真实实现。注入的 LocalModel 只产生本地预设消息，工具只返回测试数据或等待本地 Event，不运行 Bash、修改项目文件或访问网络。
+- 重启场景关闭原应用/Saver，再创建新应用与连接，不复用内存 Conversation。正常测试不 mock SQLite。只有更新时间写入失败和默认依赖组装处使用限定替身。
+- 取消型用例有等待超时和 finally 清理，退出 Manager 后再关闭 Saver；不保留测试工具任务。MCP 发现一律不启动真实服务，默认 lifespan 用 AsyncMock 返回空工具列表。
+
+## 执行
+
+```bash
+uv run pytest -q tests/api/test_api.py --tb=no
+uv run pytest -q tests/api tests/cli tests/core/test_conversation.py tests/core/test_conversation_history.py tests/core/test_bootstrap.py --tb=no
+basedpyright --pythonpath .venv/bin/python src/omt/api src/omt/cli src/omt/core/bootstrap.py src/omt/core/configuration.py src/omt/core/events.py src/omt/core/session_manager.py src/omt/core/conversation.py tests/api/test_api.py
+```
+
+## 覆盖限制
+
+- 不请求真实模型/MCP，不验证网络代理、反向代理、浏览器跨域或实际端口部署。当前接口不提供令牌认证；测试通过不表示服务可以安全暴露到不可信网络。
+- “重启”是同一测试进程中重建应用和 SQLite 连接，不是实际操作系统进程重启；不覆盖多 worker/CLI 争用、持久化运行状态和幂等重试。
+- 本文件主要回归原 JSON Interface；SSE 增量、断线取消和发送限制由[专门用例](api-runtime-streaming.md)验证。仍无事件补发、独立取消 HTTP Interface 或断线后台运行；普通 JSON 断线不保证立即取消。
+- Async 工具的清理不证明任意同步工具线程、远程调用或外部进程能立即停止，也不证明工具副作用回滚。
+- 历史字段过滤不等于文本脱敏、目录沙箱或多用户授权；固定工作目录仍有当前系统用户权限。
+- 未覆盖真实磁盘损坏、配额和大负载；请求文本长度校验不是整个 HTTP 请求体的内存限制。

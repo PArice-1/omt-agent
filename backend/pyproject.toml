@@ -1,0 +1,37 @@
+[project]
+name = "omt"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "LR", email = "globallr86@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "aiosqlite>=0.22.1",
+    "dotenv>=0.9.9",
+    "fastapi[standard]>=0.150.0",
+    "langchain>=1.4.4",
+    "langchain-deepseek>=1.1.1",
+    "langchain-mcp-adapters>=0.3.2",
+    "langchain-ollama>=1.1.0",
+    "langgraph>=1.2.14",
+    "langgraph-checkpoint-sqlite>=3.1.2",
+    "loadenv>=0.1.1",
+    "prompt-toolkit>=3.0.52",
+    "pydantic-settings>=2.15.0",
+    "pytest>=9.1.1",
+    "pyyaml>=6.0.3",
+    "textual>=8.2.8,<9",
+]
+
+[project.scripts]
+omt = "omt.cli.app:main"
+omt-api = "omt.api.app:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[build-system]
+requires = ["uv_build>=0.11.32,<0.12.0"]
+build-backend = "uv_build"
