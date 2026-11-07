@@ -1,0 +1,299 @@
+import { QueryClient } from "@tanstack/react-query";
+import { createOmtClient } from "@/lib/omt-api/client";
+import type { OmtClient, TerminalEvent } from "@/lib/omt-api/contracts";
+import { isTerminal } from "@/lib/omt-api/events";
+import { RuntimeController } from "@/features/runtime/controller";
+import { applyRunEvent } from "./stream-state";
+import { ApiError, classifyRunError, errorMessage, isConnectionFailure, readErrorMessage } from "@/lib/omt-api/errors";
+import { validateMessage } from "./format";
+import type { RunState, WorkspaceState } from "./types";
+
+const initialState = (): WorkspaceState => ({
+  connection: "disconnected", backendStatus: "unknown", sessions: [], selectedId: null,
+  histories: {}, runs: {}, creating: false, refreshing: false,
+});
+
+type ClientFactory = () => OmtClient;
+
+/** All async writes belong to both a connection generation and a session ID. */
+export class WorkspaceController {
+  private state = initialState();
+  private listeners = new Set<() => void>();
+  private generation = 0;
+  private requestSequence = 0;
+  private statusSequence = 0;
+  private historyRequests = new Map<string, Promise<void>>();
+  private listRequest: Promise<boolean> | undefined;
+  private client: OmtClient;
+  private aborters = new Map<string, AbortController>();
+  readonly runtime: RuntimeController;
+  private queries = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: 0, gcTime: 0 }, mutations: { retry: false } },
+  });
+
+  constructor(factory: ClientFactory = createOmtClient) {
+    this.client = factory();
+    this.runtime = new RuntimeController(this.client, () => this.isRunning() || this.state.creating);
+  }
+
+  getSnapshot = (): WorkspaceState => this.state;
+  subscribe = (listener: () => void) => {
+    this.listeners.add(listener);
+    return () => { this.listeners.delete(listener); };
+  };
+
+  private patch(patch: Partial<WorkspaceState>) {
+    this.state = { ...this.state, ...patch };
+    this.listeners.forEach((listener) => listener());
+  }
+
+  private setRun(id: string, run: RunState) {
+    this.patch({ runs: { ...this.state.runs, [id]: run } });
+  }
+
+  private async observeRequest<T>(operation: () => Promise<T>, generation: number): Promise<T> {
+    const sequence = ++this.requestSequence;
+    const update = (status: WorkspaceState["backendStatus"]) => {
+      // A slow older success must not overwrite a newer request's failure.
+      if (!this.isCurrent(generation) || sequence < this.statusSequence) return;
+      this.statusSequence = sequence;
+      this.patch({ backendStatus: status, ...(status === "available" ? { connectionError: undefined } : {}) });
+    };
+    try {
+      const result = await operation();
+      update("available");
+      return result;
+    } catch (error) {
+      update(isConnectionFailure(error) ? "unavailable" : "available");
+      throw error;
+    }
+  }
+
+  dismissNotice = () => {
+    // Hiding presentation never acknowledges an uncertain run or unlocks sending.
+    this.patch({ notice: undefined, noticeSource: undefined, connectionError: undefined });
+  };
+
+  private isCurrent(generation: number) { return this.generation === generation; }
+  private isRunning() { return this.aborters.size > 0 || Object.values(this.state.runs).some((run) => run.phase === "sending" || run.receiving); }
+  private hasUnknown() { return Object.values(this.state.runs).some((run) => run.phase === "unknown"); }
+
+  connect = async (): Promise<boolean> => {
+    if (this.state.connection !== "disconnected" || this.isRunning() || this.state.creating) return false;
+    this.generation += 1;
+    const generation = this.generation;
+    this.queries.clear();
+    this.historyRequests.clear();
+    this.listRequest = undefined;
+    this.patch({ ...initialState(), connection: "connecting" });
+    try {
+      const runtime = await this.runtime.inspect();
+      if (!runtime) throw new ApiError(503, "runtime_status_unavailable", "无法读取运行状态，请检查本机后端。");
+      if (!this.isCurrent(generation)) return false;
+      if (!runtime.ready) {
+        this.patch({ connection: "connected", backendStatus: "available" });
+        return true;
+      }
+      const sessions = await this.observeRequest(() => this.client.listSessions(), generation);
+      if (!this.isCurrent(generation)) return false;
+      const selectedId = sessions[0]?.session_id ?? null;
+      this.patch({ connection: "connected", sessions, selectedId });
+      if (selectedId) void this.loadHistory(selectedId);
+      return true;
+    } catch (error) {
+      if (!this.isCurrent(generation)) return false;
+      this.patch({ connection: "disconnected", connectionError: readErrorMessage(error) });
+      return false;
+    }
+  };
+
+  disconnect = (): boolean => {
+    if (this.isRunning() || this.state.creating || this.state.connection === "connecting") return false;
+    this.generation += 1;
+    this.queries.clear();
+    this.historyRequests.clear();
+    this.listRequest = undefined;
+    this.patch(initialState());
+    return true;
+  };
+
+  refreshSessions = (): Promise<boolean> => {
+    if (this.state.connection !== "connected" || this.state.creating || !this.runtime.getSnapshot().runtime?.ready) return Promise.resolve(false);
+    if (this.listRequest) return this.listRequest;
+    const generation = this.generation;
+    this.patch({ refreshing: true });
+    const request = (async () => {
+      try {
+        const sessions = await this.queries.fetchQuery({
+          queryKey: [generation, "sessions"], queryFn: () => this.observeRequest(() => this.client.listSessions(), generation),
+        });
+        if (!this.isCurrent(generation)) return false;
+        const selectedId = this.state.selectedId;
+        const missing = selectedId !== null && !sessions.some((session) => session.session_id === selectedId);
+        this.patch({ sessions, selectedId: missing ? null : selectedId,
+          ...(missing ? { notice: "当前会话已不可用，请重新选择或新建会话。", noticeSource: "selection" } :
+            this.state.noticeSource === "sessions" ? { notice: undefined, noticeSource: undefined } : {}) });
+        return true;
+      } catch (error) {
+        if (this.isCurrent(generation)) {
+          this.patch({ notice: `会话列表刷新失败，已保留当前内容。${readErrorMessage(error)}`, noticeSource: "sessions" });
+        }
+        return false;
+      } finally {
+        if (this.isCurrent(generation)) {
+          this.listRequest = undefined;
+          this.patch({ refreshing: false });
+        }
+      }
+    })();
+    this.listRequest = request;
+    return request;
+  };
+
+  selectSession = (id: string) => {
+    if (!this.state.sessions.some((session) => session.session_id === id)) return;
+    this.patch({ selectedId: id });
+    if (!this.state.histories[id] && !this.state.runs[id]?.receiving) void this.loadHistory(id);
+  };
+
+  loadHistory = (id: string): Promise<void> => {
+    if (this.state.connection !== "connected" || this.state.runs[id]?.receiving || this.state.runs[id]?.phase === "sending") return Promise.resolve();
+    const existing = this.historyRequests.get(id);
+    if (existing) return existing;
+    const generation = this.generation;
+    const messages = this.state.histories[id]?.messages ?? [];
+    this.patch({ histories: { ...this.state.histories, [id]: { status: "loading", messages } } });
+    const request = (async () => {
+      try {
+        const history = await this.queries.fetchQuery({
+          queryKey: [generation, "messages", id], queryFn: () => this.observeRequest(() => this.client.getMessages(id), generation),
+        });
+        if (!this.isCurrent(generation)) return;
+        const run = this.state.runs[id];
+        const updated = run?.phase === "completed" ? { ...run, message: undefined, answer: undefined, items: undefined }
+          : run?.phase === "unknown" ? { ...run, reviewed: true } : undefined;
+        // Replace history and remove completed temporary output atomically so
+        // subscribers can never observe a duplicate final answer in between.
+        this.patch({ histories: { ...this.state.histories, [id]: { status: "ready", messages: history } },
+          ...(updated ? { runs: { ...this.state.runs, [id]: updated } } : {}) });
+      } catch (error) {
+        if (!this.isCurrent(generation)) return;
+        this.patch({ histories: { ...this.state.histories, [id]: {
+          status: "error", messages, error: readErrorMessage(error),
+        } } });
+        if (error instanceof ApiError && error.code === "session_incomplete" && this.state.runs[id]?.phase !== "completed") {
+          this.setRun(id, { ...this.state.runs[id], phase: "needs_attention", error: errorMessage(error) });
+        }
+        if (error instanceof ApiError && error.code === "session_not_found") {
+          this.patch({ selectedId: this.state.selectedId === id ? null : this.state.selectedId,
+            sessions: this.state.sessions.filter((session) => session.session_id !== id),
+            notice: "会话不存在或不属于当前工作目录，已清除失效选择。", noticeSource: "selection" });
+        }
+      } finally {
+        if (this.isCurrent(generation)) this.historyRequests.delete(id);
+      }
+    })();
+    this.historyRequests.set(id, request);
+    return request;
+  };
+
+  createSession = async (title?: string): Promise<boolean> => {
+    if (this.state.connection !== "connected" || this.state.creating || this.state.refreshing || this.isRunning() || this.hasUnknown()
+      || !this.runtime.getSnapshot().runtime?.ready || this.runtime.getSnapshot().pending) return false;
+    if (title !== undefined && (Array.from(title).length > 200 || title.includes("\u0000"))) {
+      this.patch({ notice: "标题不能超过 200 个字符，也不能包含 NUL。", noticeSource: "input" });
+      return false;
+    }
+    const generation = this.generation;
+    this.patch({ creating: true, notice: undefined, noticeSource: undefined });
+    try {
+      const session = await this.observeRequest(() => this.client.createSession(title === undefined ? {} : { title }), generation);
+      if (!this.isCurrent(generation)) return false;
+      this.patch({ sessions: [session, ...this.state.sessions], selectedId: session.session_id,
+        histories: { ...this.state.histories, [session.session_id]: { status: "ready", messages: [] } } });
+      return true;
+    } catch (error) {
+      if (this.isCurrent(generation)) {
+        this.patch({ creating: false });
+        this.patch({ notice:
+          `创建未确认：${errorMessage(error)} 请先刷新列表检查是否已创建，不要连续重复创建。`, noticeSource: "create" });
+      }
+      return false;
+    } finally {
+      if (this.isCurrent(generation)) this.patch({ creating: false });
+    }
+  };
+
+  send = async (id: string, message: string): Promise<boolean> => {
+    const run = this.state.runs[id];
+    if (this.state.connection !== "connected" || this.state.creating || this.state.refreshing || this.isRunning() || this.hasUnknown()
+      || ["needs_attention", "failed", "cancelled"].includes(run?.phase ?? "") || this.state.histories[id]?.status !== "ready"
+      || !this.runtime.getSnapshot().runtime?.ready || this.runtime.getSnapshot().runtime?.changing || this.runtime.getSnapshot().runtime?.busy
+      || this.runtime.getSnapshot().pending) return false;
+    const validation = validateMessage(message);
+    if (validation) {
+      this.setRun(id, { phase: "rejected", error: validation });
+      return false;
+    }
+    const generation = this.generation;
+    // Set the lock synchronously, before any await (including a double click in one render).
+    const aborter = new AbortController();
+    this.aborters.set(id, aborter);
+    this.setRun(id, { phase: "sending", message, receiving: true, items: [] });
+    let terminal: TerminalEvent | undefined;
+    try {
+      const result = await this.observeRequest(() => this.client.streamRun(id, message, (event) => {
+        if (!this.isCurrent(generation)) return;
+        const current = this.state.runs[id];
+        if (event.session_id !== id || (current.runId && current.runId !== event.run_id))
+          throw new ApiError(200, "invalid_response", "流式事件不属于本轮请求，结果未确认。");
+        this.setRun(id, applyRunEvent(current, event));
+        if (isTerminal(event)) terminal = event;
+      }, aborter.signal), generation);
+      if (!terminal && this.isCurrent(generation)) {
+        if (result.session_id !== id) throw new ApiError(200, "invalid_response", "执行响应的会话 ID 不匹配，无法确认结果。");
+        this.setRun(id, applyRunEvent(this.state.runs[id], result));
+        terminal = result;
+      }
+    } catch (error) {
+      if (!this.isCurrent(generation)) return false;
+      if (!terminal) {
+        const stopped = aborter.signal.aborted;
+        const current = this.state.runs[id];
+        // JSON errors before admission can be rejections. After run.started,
+        // transport/protocol errors never prove that execution stopped.
+        this.setRun(id, { ...current, phase: current.runId ? "unknown" : classifyRunError(error),
+          error: stopped ? "已停止接收，正在尝试终止。结果未确认；工具可能仍在执行，副作用不会自动回滚。" : errorMessage(error),
+          runId: current.runId ?? (error instanceof ApiError ? error.runId : undefined), reviewed: false });
+      }
+    } finally {
+      this.aborters.delete(id);
+      if (this.isCurrent(generation)) this.setRun(id, { ...this.state.runs[id], receiving: false });
+    }
+    if (!this.isCurrent(generation) || !terminal || terminal.type !== "run.completed") return false;
+    // Read failures cannot turn a confirmed completed run into a failed run or resend it.
+    // A list request begun before completion may contain stale timestamps/order.
+    // Finish it first, then explicitly request a post-completion snapshot.
+    const priorList = this.listRequest;
+    const refreshList = async () => {
+      if (priorList) await priorList;
+      if (this.isCurrent(generation)) await this.refreshSessions();
+    };
+    await Promise.all([this.loadHistory(id), refreshList()]);
+    return this.isCurrent(generation);
+  };
+
+  stop = (id: string) => {
+    const aborter = this.aborters.get(id);
+    if (!aborter || this.state.runs[id]?.stopping) return;
+    this.setRun(id, { ...this.state.runs[id], stopping: true });
+    aborter.abort();
+  };
+
+  acknowledgeUnknown = (id: string) => {
+    const run = this.state.runs[id];
+    if (run?.phase === "unknown" && run.reviewed && this.state.histories[id]?.status === "ready") {
+      this.setRun(id, { phase: "idle" });
+    }
+  };
+}
