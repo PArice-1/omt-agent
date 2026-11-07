@@ -1,0 +1,30 @@
+# Local dependencies and generated files
+.venv/
+node_modules/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+.next/
+out/
+coverage/
+htmlcov/
+.coverage
+.coverage.*
+playwright-report/
+test-results/
+*.tsbuildinfo
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+.pi/
+.vscode/
+.DS_Store
