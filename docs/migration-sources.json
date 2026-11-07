@@ -1,0 +1,37 @@
+{
+  "backend": {
+    "source_directory": "OMT",
+    "head": "41b69c6777d78b22cc791ed2c72290fa66381e2d",
+    "refs": {
+      "refs/heads/chore/git-cleanup": "7b2bdcf9994fbe16199c72703a97fdfad03585c4",
+      "refs/heads/feat/api-runtime-streaming": "bd68d569cf08eaa9622138222eaf826f114488da",
+      "refs/heads/feat/models-addition": "ec72767092e20d9dc91774bcc895c613eeb671f0",
+      "refs/heads/feature/initalize": "32c9dbc4b86e79f3c638b1489cf2bee0ad3bd4c7",
+      "refs/heads/feature/tui": "9b161fc210cb22fcd68e89ef89850279ee7eb91e",
+      "refs/heads/local/no-bearer": "e9adab84ac33b1723d156b22a541a9dff242ded9",
+      "refs/heads/main": "41b69c6777d78b22cc791ed2c72290fa66381e2d",
+      "refs/remotes/origin/chore/git-cleanup": "7b2bdcf9994fbe16199c72703a97fdfad03585c4",
+      "refs/remotes/origin/feat/api-runtime-streaming": "bd68d569cf08eaa9622138222eaf826f114488da",
+      "refs/remotes/origin/feat/models-addition": "819c68ee3f2433dd3cb8072d64af298b2fcdeec5",
+      "refs/remotes/origin/feature/initalize": "e9794b839dcf94398f7775b0d5b765fefcabf4f5",
+      "refs/remotes/origin/feature/tui": "63e482ae5c22ec0782182dd19e145957f4842663",
+      "refs/remotes/origin/main": "41b69c6777d78b22cc791ed2c72290fa66381e2d"
+    }
+  },
+  "knowledge_base": {
+    "source_directory": "rag-mcp",
+    "head": "67c89907909290bd29d339cba8b3d97b23b81ff8",
+    "refs": {
+      "refs/heads/main": "67c89907909290bd29d339cba8b3d97b23b81ff8",
+      "refs/remotes/origin/main": "67c89907909290bd29d339cba8b3d97b23b81ff8"
+    }
+  },
+  "frontend": {
+    "source_directory": "omt-frontend",
+    "head": "48c489e2aaa1a7a0ce3f5052fd3fd4d8aebbd852",
+    "refs": {
+      "refs/heads/main": "48c489e2aaa1a7a0ce3f5052fd3fd4d8aebbd852",
+      "refs/heads/no-bearer": "db5b74e39e4f82442c13d1e658b80f7c3c0af3c9"
+    }
+  }
+}
