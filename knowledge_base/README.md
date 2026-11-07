@@ -1,5 +1,7 @@
 # rag-mcp
 
+本模块位于 monorepo 的 `knowledge_base/`。以下模块级命令在本目录执行，统一安装与启动见 [仓库首页](../README.md)，专题文档见 [统一导航](../docs/README.md)。
+
 本地持久化 RAG 知识库：将 Markdown/TXT 资料写入 Qdrant，通过 MCP 为 Agent 提供语义搜索、关键词搜索和文档读取。
 
 - 支持 UTF-8 编码的 `.md`、`.txt`，可导入多个目录或文件。
@@ -10,7 +12,7 @@
 
 ## 快速开始
 
-需要 Python 3.12+、[uv](https://docs.astral.sh/uv/) 和 [Ollama](https://ollama.com/)。以下命令在项目根目录执行。
+需要 Python 3.12+、[uv](https://docs.astral.sh/uv/) 和 [Ollama](https://ollama.com/)。以下命令在本模块的 `knowledge_base/` 目录执行。
 
 ### 1. 安装依赖并准备模型
 
@@ -45,11 +47,11 @@ uv run rag-mcp --build-on-start --source /path/to/docs /path/to/notes.md \
   --db-path /path/to/storage --collection knowledge
 ```
 
-示例路径需替换为实际路径。更多构建参数见[构建与去重](docs/ingestion.md)，启动参数见 [MCP 与检索](docs/mcp.md)。
+示例路径需替换为实际路径。更多构建参数见[构建与去重](../docs/knowledge_base/ingestion.md)，启动参数见 [MCP 与检索](../docs/knowledge_base/mcp.md)。
 
 ## 接入 Agent
 
-在支持 `mcpServers` 配置格式的客户端中添加以下配置，将 `/absolute/path/to/rag-mcp` 替换为项目的实际绝对路径：
+在支持 `mcpServers` 配置格式的客户端中添加以下配置，将 `/absolute/path/to/omt-monorepo/knowledge_base` 替换为项目的实际绝对路径：
 
 ```json
 {
@@ -57,7 +59,7 @@ uv run rag-mcp --build-on-start --source /path/to/docs /path/to/notes.md \
     "knowledge": {
       "command": "uv",
       "args": [
-        "--directory", "/absolute/path/to/rag-mcp",
+        "--directory", "/absolute/path/to/omt-monorepo/knowledge_base",
         "run", "rag-mcp", "--build-on-start"
       ]
     }
@@ -69,7 +71,7 @@ uv run rag-mcp --build-on-start --source /path/to/docs /path/to/notes.md \
 
 > 先搜索我的知识库，说明项目如何安装，并注明资料来源。
 
-可用工具：`search_knowledge`、`search_keyword`、`list_documents`、`get_document`、`get_chunk`、`get_knowledge_base_stats`。参数和返回结构见 [MCP 与检索](docs/mcp.md)。
+可用工具：`search_knowledge`、`search_keyword`、`list_documents`、`get_document`、`get_chunk`、`get_knowledge_base_stats`。参数和返回结构见 [MCP 与检索](../docs/knowledge_base/mcp.md)。
 
 ## 使用注意
 
@@ -125,13 +127,13 @@ uv run --group eval python -m evals.run --collection kb_eval_1 --max-queries 10 
 
 | 文档 | 内容 |
 |---|---|
-| [架构总览](docs/architecture.md) | 构建与检索流程、模块职责、目录结构和迁移说明 |
-| [构建与去重](docs/ingestion.md) | CLI/Python 构建、处理标识、完整性判断和重试限制 |
-| [文件切分](docs/chunking.md) | Markdown/TXT/Parquet 读取、切分规则、原始 ID 和精确定位 |
-| [片段向量化](docs/embeddings.md) | Ollama 配置、输入组织和向量结果结构 |
-| [向量存储](docs/storage.md) | Qdrant 集合、写入、持久化和客户端生命周期 |
-| [MCP 与检索](docs/mcp.md) | 启动配置、六个工具、Python 检索与分页语义 |
-| [检索评估](docs/evaluation.md) | T2Retrieval 入库、文档级检索评分、指标口径和结果报告 |
+| [架构总览](../docs/knowledge_base/architecture.md) | 构建与检索流程、模块职责、目录结构和迁移说明 |
+| [构建与去重](../docs/knowledge_base/ingestion.md) | CLI/Python 构建、处理标识、完整性判断和重试限制 |
+| [文件切分](../docs/knowledge_base/chunking.md) | Markdown/TXT/Parquet 读取、切分规则、原始 ID 和精确定位 |
+| [片段向量化](../docs/knowledge_base/embeddings.md) | Ollama 配置、输入组织和向量结果结构 |
+| [向量存储](../docs/knowledge_base/storage.md) | Qdrant 集合、写入、持久化和客户端生命周期 |
+| [MCP 与检索](../docs/knowledge_base/mcp.md) | 启动配置、六个工具、Python 检索与分页语义 |
+| [检索评估](../docs/knowledge_base/evaluation.md) | T2Retrieval 入库、文档级检索评分、指标口径和结果报告 |
 
 ## 测试
 

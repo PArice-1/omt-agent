@@ -1,6 +1,8 @@
 # 向量存储
 
-[返回项目首页](../README.md) · [架构总览](architecture.md)
+本文中的模块级命令在仓库的 `knowledge_base/` 目录执行；根目录命令见 [开发说明](../development.md).
+
+[返回项目首页](../../knowledge_base/README.md) · [架构总览](architecture.md)
 
 `vector_databbase/` 提供 Qdrant 本地持久化封装，公开 `VectorDatabase`。初始化传入数据库目录，`self.client` 是底层 `QdrantClient`，不需要单独启动 Qdrant 服务。
 
@@ -40,6 +42,6 @@ MCP 的检索和读取也使用这个持久化数据库，不再使用每次查�
 
 `evals/data/storage/` 保留 Qdrant 本地数据库原文件，便于展示和检查；它不是 Qdrant 服务端的快照导出格式。`kb_eval_1` 是当前报告对应的完整集合，包含 1000 篇原始资料、1528 个片段，片段按原始资料 ID 共享 `source`。文档数与片段数分别保存在集合 metadata 中，只有 `build_complete is True` 才能用于评估。
 
-该目录还原样保留一个旧版完整集合和两个未完成集合，详见[快照清单](../evals/data/storage/README.md)。不删除历史集合，也不将未完成集合算作有效结果。
+该目录还原样保留一个旧版完整集合和两个未完成集合，详见[快照清单](../../knowledge_base/evals/data/storage/README.md)。不删除历史集合，也不将未完成集合算作有效结果。
 
 报告和数据库纳入 Git 是为了展示；数据库是可变二进制文件，后续运行会产生变更并增加仓库历史体积。需要试用时建议复制到一个新的临时目录，通过 `--db-path` 指定副本，避免修改保存的基线。使用 `uv.lock` 固定的客户端版本，不要让多个进程同时访问同一目录。

@@ -205,4 +205,4 @@ uv run --group eval python -m unittest discover -s evals/tests -v
 
 使用临时生成的小型 Parquet、mock embedding 和临时本地 Qdrant，不需要大数据文件和模型服务。覆盖通用 Parquet 可配置列、可选依赖按需加载、长文切分与精确偏移、原始 ID/正文保留、相同正文不同 ID、独立集合、重复构建拒绝、分批入库、失败标记、文档/片段计数、文档级去重和检索预算。原有业务测试仍使用 `python -m unittest discover -s tests`。
 
-后续评估流程与注意事项见[评估说明](../docs/evaluation.md)。
+后续评估流程与注意事项见[评估说明](../../docs/knowledge_base/evaluation.md)。

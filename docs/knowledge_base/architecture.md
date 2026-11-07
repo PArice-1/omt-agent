@@ -1,6 +1,8 @@
 # 架构总览
 
-[返回项目首页](../README.md)
+本文中的模块级命令在仓库的 `knowledge_base/` 目录执行；根目录命令见 [开发说明](../development.md).
+
+[返回项目首页](../../knowledge_base/README.md)
 
 ## 项目定位
 

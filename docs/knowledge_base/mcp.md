@@ -1,6 +1,8 @@
 # MCP 与检索
 
-[返回项目首页](../README.md) · [架构总览](architecture.md)
+本文中的模块级命令在仓库的 `knowledge_base/` 目录执行；根目录命令见 [开发说明](../development.md).
+
+[返回项目首页](../../knowledge_base/README.md) · [架构总览](architecture.md)
 
 ## 直接使用 Python
 
@@ -52,11 +54,11 @@ MCP 客户端配置示例（把绝对路径替换为实际路径）：
     "knowledge": {
       "command": "uv",
       "args": [
-        "--directory", "/absolute/path/to/rag-mcp",
+        "--directory", "/absolute/path/to/omt-monorepo/knowledge_base",
         "run", "rag-mcp",
         "--build-on-start",
-        "--source", "/absolute/path/to/rag-mcp/knowledge-base",
-        "--db-path", "/absolute/path/to/rag-mcp/.qdrant",
+        "--source", "/absolute/path/to/omt-monorepo/knowledge_base/knowledge-base",
+        "--db-path", "/absolute/path/to/omt-monorepo/knowledge_base/.qdrant",
         "--collection", "knowledge"
       ]
     }
