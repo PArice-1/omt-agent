@@ -1,0 +1,19 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+/knowledge-base/
+/draft/
+
+# Local vector databases
+/.qdrant/
+/src/rag_mcp/vector_databbase/storage/
+
+# Raw evaluation dataset downloads; keep reports and database snapshots tracked
+/evals/data/*.parquet

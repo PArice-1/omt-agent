@@ -1,0 +1,28 @@
+[project]
+name = "rag-mcp"
+version = "0.1.0"
+description = "Persistent local RAG knowledge base with MCP search and document tools"
+readme = "README.md"
+authors = [
+    { name = "LR", email = "globallr86@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "chonkie>=1.6.4,<2",
+    "markdown-it-py>=4.2.0",
+    "mcp>=2,<3",
+    "qdrant-client>=1.20.0",
+]
+
+[dependency-groups]
+eval = [
+    "pyarrow>=18",
+]
+
+[project.scripts]
+rag-mcp = "rag_mcp:main"
+rag-build-kb = "rag_mcp.build_kb:main"
+
+[build-system]
+requires = ["uv_build>=0.11.32,<0.12.0"]
+build-backend = "uv_build"
