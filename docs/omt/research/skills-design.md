@@ -1,5 +1,7 @@
 # Skills 模块调研与 OMT 初步建议
 
+本文中的模块级命令在仓库的 `backend/` 目录执行；根目录命令见 [开发说明](../../development.md).
+
 本文记录方案调研与建议，不作为当前功能的唯一依据。后续已在 `core/skills.py` 实现元数据发现与目录提示词生成，Conversation 也已将目录与可选外部提示词文本合并为初始 SystemMessage；当前契约见[架构说明](../architecture.md)，验证见[Skills 测试说明](../tests/skills.md)。
 
 ## 1. 核心模型

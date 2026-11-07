@@ -1,9 +1,11 @@
 # 核心 reasoning 与快捷模型目录测试说明
 
+本文中的模块级命令在仓库的 `backend/` 目录执行；根目录命令见 [开发说明](../../development.md).
+
 ## 对象与目的
 
-- 源码：[conversation.py](../../src/omt/core/conversation.py)、[events.py](../../src/omt/core/events.py)、[model_configuration.py](../../src/omt/core/model_configuration.py)、[settings.py](../../src/omt/core/settings.py) 的 ModelDefinition。
-- 测试：[test_reasoning.py](../../tests/core/test_reasoning.py)、[test_model_choices.py](../../tests/core/test_model_choices.py)。
+- 源码：[conversation.py](../../../backend/src/omt/core/conversation.py)、[events.py](../../../backend/src/omt/core/events.py)、[model_configuration.py](../../../backend/src/omt/core/model_configuration.py)、[settings.py](../../../backend/src/omt/core/settings.py) 的 ModelDefinition。
+- 测试：[test_reasoning.py](../../../backend/tests/core/test_reasoning.py)、[test_model_choices.py](../../../backend/tests/core/test_model_choices.py)。
 - 保证 reasoning 属于入口无关的共用执行能力，不混入 answer，不为了前端显示重建模型历史；快捷模型目录可供 API 和后续 CLI 复用，不依赖 HTTP。
 
 ## 场景
@@ -20,7 +22,7 @@
 
 ## 隔离方式
 
-沿用 [core/conftest.py](../../tests/core/conftest.py) 的自动 fixture：settings.root 与 cwd 均位于 tmp_path，设置缓存前后清空。模型是本地 FakeList/FakeMessages 的确定性实现，不读取真实配置、不联网；并行回归仅使用 asyncio.Event 控制先后，不依赖随机 sleep；目录保存使用假 Key 和保留域名，仅写入 tmp_path 内的配置，无真实用户文件、数据库、MCP 或进程副作用。通过公开 Conversation 和 list_configured_models 验证行为，不直接调用私有投影器。
+沿用 [core/conftest.py](../../../backend/tests/core/conftest.py) 的自动 fixture：settings.root 与 cwd 均位于 tmp_path，设置缓存前后清空。模型是本地 FakeList/FakeMessages 的确定性实现，不读取真实配置、不联网；并行回归仅使用 asyncio.Event 控制先后，不依赖随机 sleep；目录保存使用假 Key 和保留域名，仅写入 tmp_path 内的配置，无真实用户文件、数据库、MCP 或进程副作用。通过公开 Conversation 和 list_configured_models 验证行为，不直接调用私有投影器。
 
 ## 执行
 

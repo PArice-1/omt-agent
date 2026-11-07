@@ -1,9 +1,11 @@
 # Textual TUI 交互与生命周期测试说明
 
+本文中的模块级命令在仓库的 `backend/` 目录执行；根目录命令见 [开发说明](../../development.md).
+
 ## 对象与目的
 
-- 源码：[tui.py](../../src/omt/cli/terminal/tui.py)、[screens.py](../../src/omt/cli/terminal/screens.py)、[widgets.py](../../src/omt/cli/terminal/widgets.py)、[completion.py](../../src/omt/cli/terminal/completion.py)、[tui.tcss](../../src/omt/cli/terminal/tui.tcss)、[app.py](../../src/omt/cli/app.py)。
-- 测试：[test_tui.py](../../tests/cli/test_tui.py)、[test_tui_input.py](../../tests/cli/test_tui_input.py)。
+- 源码：[tui.py](../../../backend/src/omt/cli/terminal/tui.py)、[screens.py](../../../backend/src/omt/cli/terminal/screens.py)、[widgets.py](../../../backend/src/omt/cli/terminal/widgets.py)、[completion.py](../../../backend/src/omt/cli/terminal/completion.py)、[tui.tcss](../../../backend/src/omt/cli/terminal/tui.tcss)、[app.py](../../../backend/src/omt/cli/app.py)。
+- 测试：[test_tui.py](../../../backend/tests/cli/test_tui.py)、[test_tui_input.py](../../../backend/tests/cli/test_tui_input.py)。
 - 目标：默认入口升级后，真实界面仍保持延迟会话创建、core 配置分层、凭据隐藏、历史兼容和失败保护；防止只验证控件被调用，却没有验证用户能发送、选择、取消或退出。
 
 逐行模式的原有生命周期/编号回归继续独立保留，见 [CLI 测试](cli.md)、[/resume 测试](resume.md)和[模型登录测试](model-login.md)。
@@ -47,7 +49,7 @@
 
 ## 隔离与同步方式
 
-- 沿用 [CLI conftest](../../tests/cli/conftest.py)，每例隔离 cwd、`settings.root`、环境配置、Skills 和 MCP，并前后清理设置缓存。不能仅改变 cwd 或依赖 headless 就认为不会读用户配置。
+- 沿用 [CLI conftest](../../../backend/tests/cli/conftest.py)，每例隔离 cwd、`settings.root`、环境配置、Skills 和 MCP，并前后清理设置缓存。不能仅改变 cwd 或依赖 headless 就认为不会读用户配置。
 - `App.run_test()` / Pilot 使用真实 Textual 布局、控件、键盘路由与鼠标事件，不打开用户 TTY。默认入口路由测试例外，替换启动点避免真正进入交互。
 - 真实 core 配置保存和 SQLite/检查点仅落在 `tmp_path`。目录查询、聊天 SDK 均为本地替身，假 Key 不具有认证能力；不访问模型/MCP 网络，不读写真实 `~/.omt`。
 - `factory_for` 构建真实 SessionManager、Agent 与 AsyncSqliteSaver；仅模型/测试工具是假的。事件确认工具开始、取消及资源关闭；条件等待有超时，不用任意 sleep 推测业务已完成。

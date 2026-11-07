@@ -1,9 +1,11 @@
 # Conversation、历史与会话 ID 测试说明
 
+本文中的模块级命令在仓库的 `backend/` 目录执行；根目录命令见 [开发说明](../../development.md).
+
 ## 对象与目的
 
-- 源码：[conversation.py](../../src/omt/core/conversation.py)
-- 测试：[test_conversation.py](../../tests/core/test_conversation.py)、[test_conversation_history.py](../../tests/core/test_conversation_history.py)
+- 源码：[conversation.py](../../../backend/src/omt/core/conversation.py)
+- 测试：[test_conversation.py](../../../backend/tests/core/test_conversation.py)、[test_conversation_history.py](../../../backend/tests/core/test_conversation_history.py)
 
 核心契约是：`run()` / `await arun()` 返回本轮最后回答的字符串；完整消息链留在会话的 `messages`。展示过程、保存历史、返回值三者不能相互替代。
 
@@ -94,7 +96,7 @@ events.py 仅定义 RunEvent 和 EventHandler；Conversation 的 event_handler �
 
 本次扩展在共用 RunEvent 增加 assistant.reasoning.delta、message_id、tool_call_id，原 assistant.delta 保持供 CLI 使用；API Adapter 把它命名为 assistant.text.delta。正文和 reasoning 同时从单条模型的内容块事件投影，finish 仅补未发送尾部；原事件与静默执行测试继续覆盖。新增同步/异步分片和完整块用例见[核心 reasoning 测试](reasoning-and-model-choices.md)。
 
-事件类型见 [events.py](../../src/omt/core/events.py)，渲染见 [terminal/](../../src/omt/cli/terminal/)。本组不保证所有并发事件的真实发生时间全序，不验证网络传输。本次执行层改为单次消费根图原始 messages/tools 事件，消除并行工具的惰性子通道订阅丢进度；缺失终态用例的替身改为支持原始迭代，仍断言不提交失败用户回合。确定性并行进度回归见[核心 reasoning 与事件测试](reasoning-and-model-choices.md)。显式输出及异常/取消清理继续由原有用例回归，HTTP 使用 None 的完整链路另见 [HTTP 测试](api.md)。
+事件类型见 [events.py](../../../backend/src/omt/core/events.py)，渲染见 [terminal/](../../../backend/src/omt/cli/terminal)。本组不保证所有并发事件的真实发生时间全序，不验证网络传输。本次执行层改为单次消费根图原始 messages/tools 事件，消除并行工具的惰性子通道订阅丢进度；缺失终态用例的替身改为支持原始迭代，仍断言不提交失败用户回合。确定性并行进度回归见[核心 reasoning 与事件测试](reasoning-and-model-choices.md)。显式输出及异常/取消清理继续由原有用例回归，HTTP 使用 None 的完整链路另见 [HTTP 测试](api.md)。
 
 ## 隔离方式
 

@@ -1,18 +1,20 @@
 # 模型初始化测试说明
 
+本文中的模块级命令在仓库的 `backend/` 目录执行；根目录命令见 [开发说明](../../development.md).
+
 ## 对象与目的
 
 验证“Model 包装对象 → 提供商注册表 → DeepSeek 初始化函数 → SDK 初始化”的调用链，确保参数校验在调用模型前完成，构造失败不会被当成一个有效模型保存。
 
 源码：
 
-- [model.py](../../src/omt/ai/model.py)
-- [models_manager.py](../../src/omt/ai/models_manager.py)
-- [models/deepseek.py](../../src/omt/ai/models/deepseek.py)
+- [model.py](../../../backend/src/omt/ai/model.py)
+- [models_manager.py](../../../backend/src/omt/ai/models_manager.py)
+- [models/deepseek.py](../../../backend/src/omt/ai/models/deepseek.py)
 
 Ollama 原生本地适配的无 Key 初始化、目录、思考选项与真实 SDK 离线协议验证另见 [Ollama 测试](ollama.md)；共用注册表现包含 DeepSeek/Ollama，DeepSeek 旧调用链不变。
 
-测试文件沿用 [test_ai.py](../../tests/ai/test_ai.py) 名称，但实际导入对象是 `omt.ai.model.Model`；不要根据旧名称恢复已移走的 ai.py 模块。
+测试文件沿用 [test_ai.py](../../../backend/tests/ai/test_ai.py) 名称，但实际导入对象是 `omt.ai.model.Model`；不要根据旧名称恢复已移走的 ai.py 模块。
 
 ## 场景
 
@@ -20,11 +22,11 @@ Ollama 原生本地适配的无 Key 初始化、目录、思考选项与真实 S
 | --- | --- | --- | --- |
 | 创建可用模型 | 已注册 provider、HTTP URL、假 Key 和 temperature | 构造立即初始化；保存 provider/base_url，client.model 为可调用的本地模型 | test_ai.py：test_constructor_initializes_and_stores_usable_model |
 | 显式初始化参数 | 在构造后调用私有初始化方法并传入另一个模型名及 max_tokens | 指定值沿真实内部调用链传到 SDK 初始化位置，不被旧值覆盖 | test_ai.py：test_private_init_model_returns_model_using_explicit_parameters |
-| 注册表路由 | DeepSeek 配置与额外 args | 返回 SDK 替身；参数正确传递，调用者的 args 字典保持原值 | [test_models_manager.py](../../tests/ai/test_models_manager.py)：test_registered_provider_returns_usable_model |
+| 注册表路由 | DeepSeek 配置与额外 args | 返回 SDK 替身；参数正确传递，调用者的 args 字典保持原值 | [test_models_manager.py](../../../backend/tests/ai/test_models_manager.py)：test_registered_provider_returns_usable_model |
 | DeepSeek 启用思考 | effort 为 high/max，额外请求体含自定义字段和 disabled thinking，另传 max_tokens | 返回可调用假模型；SDK 收到原 effort 和 enabled thinking；保留其他选项，不修改原请求体 | test_deepseek.py：test_reasoning_effort_enables_thinking_and_preserves_options |
 | 旧/未知模型不主动配置思考 | 旧模型 deepseek-chat 的 effort 为 Python None 或字符串 none，extra_body 为空或含自定义字段；原有效参数用例不传 effort | 不向 SDK 传 reasoning_effort，不新增 thinking；已有请求体保持原值，不伪造 disabled | test_deepseek.py：test_no_reasoning_effort_does_not_configure_thinking、test_valid_parameters_return_usable_model |
 | 已知模型三档与关闭 | deepseek-flash/deepseek-v4-pro，effort 分别为 None/none/low/high/max，请求体已有自定义字段及 enabled thinking | None 不设置参数；low/high/max 原样下发且 enabled；字符串 none 显式下发并改为 disabled，保留其他字段且不修改调用者对象；返回可调用假模型 | test_deepseek.py：test_known_models_forward_thinking_levels_and_explicitly_disable_none |
-| 类型转换 | URL/Key 分别使用字符串或 HttpUrl/SecretStr | 接受合法输入；传给 SDK 的 URL 是字符串，Key 保持 SecretStr | [test_deepseek.py](../../tests/ai/test_deepseek.py)：test_valid_parameters_return_usable_model |
+| 类型转换 | URL/Key 分别使用字符串或 HttpUrl/SecretStr | 接受合法输入；传给 SDK 的 URL 是字符串，Key 保持 SecretStr | [test_deepseek.py](../../../backend/tests/ai/test_deepseek.py)：test_valid_parameters_return_usable_model |
 | 未注册 provider | 空或未知 provider | 拒绝创建，不调用 SDK 初始化 | test_ai.py、test_models_manager.py 的 unknown_provider 用例 |
 | 缺失或空白 Key | 无 Key、None、空串、空格或换行 | 缺失/非法参数校验失败；空白 Key 被明确拒绝，不调用 SDK | 三个测试文件的 missing/blank/validation 用例 |
 | 错误 URL 或参数类型 | 非 HTTP(S) URL、非法 provider/model/Key 类型 | 对应参数位置校验失败 | test_deepseek.py：test_invalid_parameters_are_rejected |
@@ -35,7 +37,7 @@ Ollama 原生本地适配的无 Key 初始化、目录、思考选项与真实 S
 
 ## 厂商模型目录查询
 
-新增 [test_model_catalog.py](../../tests/ai/test_model_catalog.py)，通过公开 list_provider_models → models[provider].list_models → ai/models/deepseek.py 验证目录查询。注册表每项为 ModelProvider(initialize, list_models, base_url)，地址来自厂商模块（DeepSeek 为 DEEPSEEK_BASE_URL）；目录入口只需 provider/api_key，不接收用户地址或当前模型名，因此查询不按当前模型过滤。注册项另可提供 thinking_level_maps（默认空表），由厂商模块维护精确模型 ID 的官方能力，core 导入时合并；/models 响应仍只提供 ID，不从名称推测未知能力。模型初始化入口 models_provider 的调用参数不变，原有初始化回归继续保留。
+新增 [test_model_catalog.py](../../../backend/tests/ai/test_model_catalog.py)，通过公开 list_provider_models → models[provider].list_models → ai/models/deepseek.py 验证目录查询。注册表每项为 ModelProvider(initialize, list_models, base_url)，地址来自厂商模块（DeepSeek 为 DEEPSEEK_BASE_URL）；目录入口只需 provider/api_key，不接收用户地址或当前模型名，因此查询不按当前模型过滤。注册项另可提供 thinking_level_maps（默认空表），由厂商模块维护精确模型 ID 的官方能力，core 导入时合并；/models 响应仍只提供 ID，不从名称推测未知能力。模型初始化入口 models_provider 的调用参数不变，原有初始化回归继续保留。
 
 | 场景 | 输入 / 前置条件 | 预期结果 | 对应测试 |
 | --- | --- | --- | --- |
@@ -49,7 +51,7 @@ Ollama 原生本地适配的无 Key 初始化、目录、思考选项与真实 S
 
 ## 隔离方式
 
-[ai/conftest.py](../../tests/ai/conftest.py) 仅替换 DeepSeek 模块使用的 `init_chat_model`，返回 FakeListChatModel。测试仍经过真实的 Model、models_provider、deepseek_init，且使用无效的测试 Key，不读取认证文件、不调用网络。
+[ai/conftest.py](../../../backend/tests/ai/conftest.py) 仅替换 DeepSeek 模块使用的 `init_chat_model`，返回 FakeListChatModel。测试仍经过真实的 Model、models_provider、deepseek_init，且使用无效的测试 Key，不读取认证文件、不调用网络。
 
 目录测试替换 DeepSeek 模块的 build_opener，返回内存字节流或受控异常，不请求用户 URL 或官方网络。新增提供商时为该提供商建立同类的初始化和 HTTP 替身，不以真实账户证明单元测试通过。
 

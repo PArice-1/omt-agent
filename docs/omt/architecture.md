@@ -1,5 +1,7 @@
 # OMT 当前架构
 
+本文中的模块级命令在仓库的 `backend/` 目录执行；根目录命令见 [开发说明](../development.md).
+
 ## 1. 总览
 
 CLI 与支持 JSON/SSE 的 FastAPI 是平级的应用入口，共用 SessionManager、依赖组装和 SQLite 检查点。LangChain/LangGraph 负责模型与工具循环，OMT 负责模型连接、会话编排、完整历史校验，以及各入口的展示或响应投影。
@@ -27,23 +29,23 @@ core 是与入口无关的共用核心，不限定于编码场景。核心不导
 
 | 模块 | 职责 | 不承担的工作 |
 | --- | --- | --- |
-| [cli/app.py](../src/omt/cli/app.py) | 默认 TUI / --plain 路由；保留逐行交互生命周期、延迟会话和 Manager 调用 | 检查点加载、并发和失败保护 |
-| [cli/login.py](../src/omt/cli/login.py) | 逐行 /login 选择、隐藏首次 Key、厂商登录状态与模型列表展示 | JSON 读写、厂商协议、运行模型切换 |
-| [core/model_configuration.py](../src/omt/core/model_configuration.py) | 类型化 API 登录、凭据复用、完整目录与缓存、默认选择持久化及只读 list_configured_models 快捷列表 | 终端提示、会话编排、聊天请求、数据库初始化 |
-| [cli/commands.py](../src/omt/cli/commands.py) | 逐行 /resume、退出、编号映射和当前选择 | 模型执行、直接读写 Store |
-| [cli/terminal/](../src/omt/cli/terminal/) | Textual TUI 生命周期、弹窗、控件、completion.py 指令提示；tui.tcss 独立样式，plain.py 保留旧输入/渲染，__init__.py 重导出旧接口 | 配置/历史存储、厂商协议、HTTP 响应 |
-| [api/](../src/omt/api/) | lifespan；runtime.py 负责配置预览/运行设置，streaming.py 负责有界 SSE 和清理，schemas.py 投影安全字段；当前免认证 | CLI 命令、模型/工具执行循环、后台任务台账 |
-| [core/bootstrap.py](../src/omt/core/bootstrap.py) | 提示词/模型配置和依赖组装；SessionRuntime 持有当前 Manager 并协调模型/推理强度重建 | 输入循环、HTTP 传输 |
-| [core/configuration.py](../src/omt/core/configuration.py) | 共用会话选项、类型化 MCP 连接配置；入口各自继承并指定前缀 | HTTP 令牌、读取模型认证 |
-| [core/session_manager.py](../src/omt/core/session_manager.py) | 按 ID 操作、目录归属、最新历史、互斥/容量、失败和关闭清理 | 跨进程锁、回滚、全局当前会话 |
-| [core/conversation.py](../src/omt/core/conversation.py) | 初始提示词/Skills、一轮同步/异步执行、历史加载和终态校验、过程事件 | 索引、模型配置、终端显示 |
-| [core/events.py](../src/omt/core/events.py) | RunEvent 数据与 EventHandler 类型 | 渲染、SSE、持久化 |
-| [core/store.py](../src/omt/core/store.py) | 已有索引读写；显式初始化缺失数据库 | 消息、隐式建表、已有库迁移、检查点恢复 |
-| [core/settings.py](../src/omt/core/settings.py) | 模型配置、认证与目录读取及校验 | 会话编排、OAuth |
-| [ai/model.py](../src/omt/ai/model.py)、[models_manager.py](../src/omt/ai/models_manager.py)、[ai/models/](../src/omt/ai/models/) | 厂商注册、模型初始化及厂商目录查询协议 | 配置持久化、历史和展示 |
-| [agent/agent.py](../src/omt/agent/agent.py) | create_agent 与同步/异步调用、v3 流包装 | CLI、拼接历史、手动执行工具 |
-| [core/prompts/](../src/omt/core/prompts/)、[skills.py](../src/omt/core/skills.py) | 包内基础规则、可信目录的 Skill 元数据发现 | 沙箱、自动执行 Skill 脚本 |
-| [tools_manager.py](../src/omt/core/tools_manager.py)、[tools/](../src/omt/core/tools/) | 静态工具注册、文件和 Bash | 权限审批、事务回滚 |
+| [cli/app.py](../../backend/src/omt/cli/app.py) | 默认 TUI / --plain 路由；保留逐行交互生命周期、延迟会话和 Manager 调用 | 检查点加载、并发和失败保护 |
+| [cli/login.py](../../backend/src/omt/cli/login.py) | 逐行 /login 选择、隐藏首次 Key、厂商登录状态与模型列表展示 | JSON 读写、厂商协议、运行模型切换 |
+| [core/model_configuration.py](../../backend/src/omt/core/model_configuration.py) | 类型化 API 登录、凭据复用、完整目录与缓存、默认选择持久化及只读 list_configured_models 快捷列表 | 终端提示、会话编排、聊天请求、数据库初始化 |
+| [cli/commands.py](../../backend/src/omt/cli/commands.py) | 逐行 /resume、退出、编号映射和当前选择 | 模型执行、直接读写 Store |
+| [cli/terminal/](../../backend/src/omt/cli/terminal) | Textual TUI 生命周期、弹窗、控件、completion.py 指令提示；tui.tcss 独立样式，plain.py 保留旧输入/渲染，__init__.py 重导出旧接口 | 配置/历史存储、厂商协议、HTTP 响应 |
+| [api/](../../backend/src/omt/api) | lifespan；runtime.py 负责配置预览/运行设置，streaming.py 负责有界 SSE 和清理，schemas.py 投影安全字段；当前免认证 | CLI 命令、模型/工具执行循环、后台任务台账 |
+| [core/bootstrap.py](../../backend/src/omt/core/bootstrap.py) | 提示词/模型配置和依赖组装；SessionRuntime 持有当前 Manager 并协调模型/推理强度重建 | 输入循环、HTTP 传输 |
+| [core/configuration.py](../../backend/src/omt/core/configuration.py) | 共用会话选项、类型化 MCP 连接配置；入口各自继承并指定前缀 | HTTP 令牌、读取模型认证 |
+| [core/session_manager.py](../../backend/src/omt/core/session_manager.py) | 按 ID 操作、目录归属、最新历史、互斥/容量、失败和关闭清理 | 跨进程锁、回滚、全局当前会话 |
+| [core/conversation.py](../../backend/src/omt/core/conversation.py) | 初始提示词/Skills、一轮同步/异步执行、历史加载和终态校验、过程事件 | 索引、模型配置、终端显示 |
+| [core/events.py](../../backend/src/omt/core/events.py) | RunEvent 数据与 EventHandler 类型 | 渲染、SSE、持久化 |
+| [core/store.py](../../backend/src/omt/core/store.py) | 已有索引读写；显式初始化缺失数据库 | 消息、隐式建表、已有库迁移、检查点恢复 |
+| [core/settings.py](../../backend/src/omt/core/settings.py) | 模型配置、认证与目录读取及校验 | 会话编排、OAuth |
+| [ai/model.py](../../backend/src/omt/ai/model.py)、[models_manager.py](../../backend/src/omt/ai/models_manager.py)、[ai/models/](../../backend/src/omt/ai/models) | 厂商注册、模型初始化及厂商目录查询协议 | 配置持久化、历史和展示 |
+| [agent/agent.py](../../backend/src/omt/agent/agent.py) | create_agent 与同步/异步调用、v3 流包装 | CLI、拼接历史、手动执行工具 |
+| [core/prompts/](../../backend/src/omt/core/prompts)、[skills.py](../../backend/src/omt/core/skills.py) | 包内基础规则、可信目录的 Skill 元数据发现 | 沙箱、自动执行 Skill 脚本 |
+| [tools_manager.py](../../backend/src/omt/core/tools_manager.py)、[tools/](../../backend/src/omt/core/tools) | 静态工具注册、文件和 Bash | 权限审批、事务回滚 |
 
 兼容性：核心包由 `omt.coding_agent` 更名为 `omt.core`，不保留旧包的兼容导入；命令 omt、HTTP 路由、JSON 字段、配置环境变量及用户数据目录不变。此前 CLI 拆分已移除旧 session/runtime 模块和 CreateAgentSession；同步入口使用 cli.app.main()，默认启动 TUI；--plain 和异步 cli.app.run_cli() 保留逐行模式，嵌入 TUI 使用 OmtApp.run_async()，低层会话对象使用 core.conversation.Conversation。load_history() 不自动展示，核心默认静默；需要显示的调用方显式安装 CLI 渲染。
 
@@ -68,7 +70,7 @@ CLI 和 HTTP 默认都通过 `bootstrap.open_session_runtime(options)`，由 Ses
 
 `run_cli(manager_factory=...)` 和 `OmtApp(runtime_factory=...)` 可注入固定 Manager，此时不读取额外模型配置，不支持运行中切换；也可注入提供 SessionRuntime 的异步工厂。调用方应每次通过 runtime.manager 取得最新实例，不再使用切换前的引用。
 
-SessionSettings 共享 db_path、workspace_path、max_concurrent_runs、skill_roots、mcp_servers。ApiSettings 使用 OMT_API_，当前访问令牌字段可不配置且不校验长度，路由也不执行鉴权；配置令牌不会自动恢复认证。CliSettings 使用 OMT_CLI_，不要求也不读取 HTTP 令牌。两者默认数据库均为 ~/.omt/agent/state/omt.sqlite。当前 CliSettings 和 ApiSettings 均显式将 skill_roots 默认为 ~/.agents/skills；只有使用共用 SessionSettings 且保留 skill_roots=None 时，bootstrap 才回退到 ~/.omt/agent/skills 与 cwd/skills。CLI/TUI 为本机测试在 cli/settings.py 的 _default_mcp_servers 中默认配置 knowledge stdio 服务（/home/laterain/Projects/Agent/rag-mcp）；OMT_CLI_MCP_SERVERS 可替换，{} 关闭。API 在 api/settings.py 中独立配置同一个本机测试服务，使用 rag_mcp.mcp.server、--build-on-start，源目录为 /home/laterain/.omt/knowledge-database，存储为其 storage 子目录，集合为 knowledge；OMT_API_MCP_SERVERS 可替换或以 {} 关闭，不读取 CLI 环境变量。两入口不应同时启动使用相同本地 Qdrant 存储的 MCP，以免争用存储锁。共用 SessionSettings 默认 MCP 仍为空。模型的三份 JSON 配置仍由 settings.py 读取，与这些启动选项不同。
+SessionSettings 共享 db_path、workspace_path、max_concurrent_runs、skill_roots、mcp_servers。ApiSettings 使用 OMT_API_，CliSettings 使用 OMT_CLI_；两者默认会话库均为 ~/.omt/agent/state/omt.sqlite，skill_roots 为 ~/.agents/skills。共用 SessionSettings 的 skill_roots=None 才回退到用户/项目默认目录。CLI/API 继承共用的空 MCP 默认值，分别通过 OMT_CLI_MCP_SERVERS / OMT_API_MCP_SERVERS 显式启用；不导入 knowledge_base，也不写死插件位置。接入示例及 Qdrant 进程锁限制见 [插件接入](../knowledge_base/plugin.md)。模型三份 JSON 的位置和 HTTP 当前免认证行为保持不变。
 
 ### 默认 TUI 交互
 
@@ -307,6 +309,6 @@ Bash 返回 exit_code、stdout、stderr、timed_out、truncated。非零退出�
 
 当前不提供 OAuth 登录/刷新、自动恢复上次会话、/sessions 别名、图中断恢复流程、工具沙箱/审批、Bash 实时增量输出或自动 AST 工具发现。HTTP 已支持 SSE 和断线尝试取消，但没有后台任务、独立取消接口、事件补发、按 Session 模型持久化或多用户。底层 Agent 的中断测试通过，不代表应用入口已实现暂停恢复。
 
-源码跟踪注意：当前 .gitignore 的 agent/ 是目录名规则，会匹配 src/omt/agent/。若磁盘可读却未出现在 Git 状态中，运行 git check-ignore -v <path>；不要为提交源码而取消敏感配置忽略保护，更不要提交认证文件。
+源码跟踪注意：交付前使用 git check-ignore -v <path> 检查新增文件，保持源码可跟踪并保留敏感配置的忽略保护。
 
 测试执行方式和配置隔离要求见[测试规范与索引](tests/README.md)。

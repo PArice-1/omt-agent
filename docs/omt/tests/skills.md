@@ -1,9 +1,11 @@
 # Skills 发现与提示词测试说明
 
+本文中的模块级命令在仓库的 `backend/` 目录执行；根目录命令见 [开发说明](../../development.md).
+
 ## 对象与目的
 
-- 源码：[skills.py](../../src/omt/core/skills.py)。
-- 测试：[test_skills.py](../../tests/core/test_skills.py)。
+- 源码：[skills.py](../../../backend/src/omt/core/skills.py)。
+- 测试：[test_skills.py](../../../backend/tests/core/test_skills.py)。
 - 公开调用方式：`discover_skills(roots)` 返回 `SkillDiscoveryResult`，`render_skills_prompt(skills)` 返回 Markdown 字符串。
 - 保证发现结果保留 Skill 文件的绝对路径，模型目录只包含元数据与加载规则，全文仍可通过已有 read 工具按需取得。
 - 本说明覆盖独立发现与渲染模块；Conversation 现已消费目录并初始化系统消息，接入测试与契约另见 [Conversation 测试说明](conversation.md)。工具集合未改变。

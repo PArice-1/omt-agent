@@ -1,5 +1,7 @@
 # 前端接入 API 文档
 
+本文中的模块级命令在仓库的 `backend/` 目录执行；根目录命令见 [开发说明](../development.md).
+
 本文描述当前实现的本机 HTTP 契约，适用于浏览器 UI、其他客户端及负责生成前端的 AI。启动和环境变量见 [HTTP 使用说明](api.md)，模块职责见[架构说明](architecture.md)。
 
 **前后端对齐入口：**第 5 节定义 OMT v1 流式协议、服务端输出链路、事件顺序和界面更新规则；第 6 节给出 `fetch` 增量读取与 SSE 解析代码。前端消费的是本文的 OMT 协议，不是 OpenAI `choices[].delta`、LangGraph 原始事件或普通 JSON `/runs` 响应。

@@ -1,9 +1,11 @@
 # HTTP 运行配置与 SSE 测试说明
 
+本文中的模块级命令在仓库的 `backend/` 目录执行；根目录命令见 [开发说明](../../development.md).
+
 ## 对象与目的
 
-- 源码：[api/runtime.py](../../src/omt/api/runtime.py)、[configuration_routes.py](../../src/omt/api/configuration_routes.py)、[streaming.py](../../src/omt/api/streaming.py)、[schemas.py](../../src/omt/api/schemas.py)、[app.py](../../src/omt/api/app.py)，以及 [SessionManager](../../src/omt/core/session_manager.py) 的接纳通知。
-- 测试：[test_runtime_streaming.py](../../tests/api/test_runtime_streaming.py)。
+- 源码：[api/runtime.py](../../../backend/src/omt/api/runtime.py)、[configuration_routes.py](../../../backend/src/omt/api/configuration_routes.py)、[streaming.py](../../../backend/src/omt/api/streaming.py)、[schemas.py](../../../backend/src/omt/api/schemas.py)、[app.py](../../../backend/src/omt/api/app.py)，以及 [SessionManager](../../../backend/src/omt/core/session_manager.py) 的接纳通知。
+- 测试：[test_runtime_streaming.py](../../../backend/tests/api/test_runtime_streaming.py)。
 - 目的：保证 HTTP 使用真实共用 Runtime/Manager，不在路由重新执行模型或工具；首次配置不提前落盘，快速切换不保存，SSE 真正增量输出且断线能够回收运行。
 - 核心正文/reasoning 的同步/异步投影与只读快捷目录另见[核心 reasoning 与模型选择测试](reasoning-and-model-choices.md)。原 JSON 兼容、会话恢复、存储错误及 CLI 共用回归见 [HTTP/Manager 测试](api.md)。
 

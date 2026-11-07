@@ -1,10 +1,12 @@
 # 模型登录、完整目录与运行中选择测试说明
 
+本文中的模块级命令在仓库的 `backend/` 目录执行；根目录命令见 [开发说明](../../development.md).
+
 ## 对象与目的
 
-- core：[model_configuration.py](../../src/omt/core/model_configuration.py)、[bootstrap.py](../../src/omt/core/bootstrap.py)、[store.py](../../src/omt/core/store.py)。
-- CLI：[login.py](../../src/omt/cli/login.py)、[app.py](../../src/omt/cli/app.py)。
-- 测试：[test_model_configuration.py](../../tests/core/test_model_configuration.py)、[test_login.py](../../tests/cli/test_login.py)。
+- core：[model_configuration.py](../../../backend/src/omt/core/model_configuration.py)、[bootstrap.py](../../../backend/src/omt/core/bootstrap.py)、[store.py](../../../backend/src/omt/core/store.py)。
+- CLI：[login.py](../../../backend/src/omt/cli/login.py)、[app.py](../../../backend/src/omt/cli/app.py)。
+- 测试：[test_model_configuration.py](../../../backend/tests/core/test_model_configuration.py)、[test_login.py](../../../backend/tests/cli/test_login.py)。
 - 厂商地址、协议和 HTTP 限制见[模型测试](ai-models.md#厂商模型目录查询)。
 
 保证配置处理在 core，厂商地址/协议在 ai，CLI 仅交互。无配置也能进入输入循环等待 `/login`，新增厂商不需要修改 CLI/core 分支。

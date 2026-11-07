@@ -1,9 +1,11 @@
 # HTTP 与 SessionManager 测试说明
 
+本文中的模块级命令在仓库的 `backend/` 目录执行；根目录命令见 [开发说明](../../development.md).
+
 ## 对象与目的
 
-- 源码：[api/](../../src/omt/api/)、[session_manager.py](../../src/omt/core/session_manager.py)、[bootstrap.py](../../src/omt/core/bootstrap.py)。
-- 测试：[test_api.py](../../tests/api/test_api.py)。
+- 源码：[api/](../../../backend/src/omt/api)、[session_manager.py](../../../backend/src/omt/core/session_manager.py)、[bootstrap.py](../../../backend/src/omt/core/bootstrap.py)。
+- 测试：[test_api.py](../../../backend/tests/api/test_api.py)。
 - 验证 HTTP Interface 的可观察响应、真实 SQLite 历史恢复、会话隔离与失败清理；不以 mock 写入或内部方法调用次数替代执行结果。CLI 入口见 [CLI 测试](cli.md)，共用组装见[配置测试](session-and-config.md)，事件与静默执行见 [Conversation 测试](conversation.md)。
 
 ## 场景
@@ -22,10 +24,10 @@
 | 可选访问令牌 | 不提供令牌，或显式提供空字符串、空白、短令牌及旧格式令牌 | 配置均可创建，保留配置原值但 repr 不暴露非空白令牌；仅保留字段兼容，不启用认证 | test_settings_accept_optional_access_token |
 | 未配置启动及初始化失败 | 无配置且数据库缺失，或完整假配置但数据库缺失/缺表；另有错误 cwd 和假令牌环境变量 | 无配置可查状态且会话接口 503；初始化失败保留配置入口，不创建空库、不修复缺表；错误 cwd 仍拒绝启动，令牌可读 | test_settings_and_unconfigured_startup |
 | 默认 lifespan 共用组装 | 临时假 settings，SDK 包装对象/MCP 发现为替身，真实默认 bootstrap/Store/Agent/Saver | 应用工厂创建时无模型/MCP 副作用；两轮成功且每个 lifespan 只初始化一次模型/发现；退出后业务请求 503 | test_default_lifespan_builds_dependencies_once_and_cleans_up |
-| API 本机 MCP 默认值 | 删除 API MCP 环境变量，同时 CLI 设置 {} | API 仍只有 knowledge，Python、模块、构建参数、源目录、存储目录和集合与本机默认一致；仅解析，不启动服务 | test_api_mcp_uses_local_default_without_cli_override |
-| API MCP 显式关闭 | API 设置 {}，CLI 配置假服务 | API 得到空字典，不受 CLI 前缀影响 | test_api_mcp_environment_can_disable_default |
+| MCP 可选及前缀隔离 | 删除 API 配置，CLI 配置假服务 | API MCP 为空，不继承 CLI 插件 | test_api_mcp_is_optional_and_ignores_cli_plugins |
+| API MCP 显式关闭 | API 设置 {}，CLI 配置假服务 | API 为空，不受 CLI 前缀影响 | test_api_mcp_environment_can_disable_plugin |
 | API MCP 非法配置 | API stdio command 为空 | 抛 ValidationError，不回退到默认服务 | test_api_mcp_invalid_environment_does_not_fall_back_to_default |
-| MCP 配置和敏感值 | 环境变量提供测试 HTTP MCP 配置，短测试令牌可读取，非法 max_concurrent_runs=0 触发校验失败 | 显式 HTTP 配置完整替换默认 knowledge 并转换为正确 Connection；repr/格式化异常不回显测试令牌及 header，不因免认证取消其他配置校验 | test_mcp_configuration_is_explicit_and_secrets_are_not_rendered |
+| MCP 配置和敏感值 | 环境变量提供测试 HTTP MCP 配置，短测试令牌可读取，非法 max_concurrent_runs=0 触发校验失败 | 显式 HTTP 配置设置 MCP 插件 并转换为正确 Connection；repr/格式化异常不回显测试令牌及 header，不因免认证取消其他配置校验 | test_mcp_configuration_is_explicit_and_secrets_are_not_rendered |
 
 需求调整说明：当前本机分支已停用令牌长度校验和路由鉴权，并开放 Swagger/OpenAPI，因此原 401、缺令牌启动失败和 docs 404 预期不再适用。测试改为验证匿名调用四个业务接口和可选令牌配置，同时保留消息校验、工作目录拒绝及敏感信息保护。API 对缺配置/缺库/缺表改为保留配置入口并报告未就绪；底层 bootstrap 的严格预建库检查不变；不以删除或跳过失败用例代替契约更新。
 
@@ -39,8 +41,8 @@ test_cli_and_http_share_one_manager_without_leaking_terminal_output 使用同一
 
 ## 隔离方式
 
-- 模块级自动 fixture 将 cwd、settings.root 指向 tmp_path，前后清理模型设置缓存，移除本组使用的宿主配置环境变量，并用 OMT_API_MCP_SERVERS={} 显式关闭本机默认服务。仅默认值专项删除该变量，只解析参数，不访问服务目录或建立连接。所有数据库均由测试显式建表，不读取本机配置或凭据。
-- 本机测试需求使 API 从默认无 MCP 改为默认 knowledge；覆盖、关闭和非法参数用例防止误连默认服务，真实 MCP 构建及存储锁不属于本组离线测试。
+- 模块级自动 fixture 将 cwd、settings.root 指向 tmp_path，前后清理模型设置缓存，移除本组使用的宿主配置环境变量，并用 OMT_API_MCP_SERVERS={} 显式关闭 MCP 插件。仅默认值专项删除该变量，验证未配置时为空，不访问服务目录或建立连接。所有数据库均由测试显式建表，不读取本机配置或凭据。
+- MCP 按插件方式显式配置；默认值专项验证未设置变量时为空，错误配置仍拒绝，不回退到任何隐式服务。
 - HTTP 使用 TestClient，不监听端口；LangGraph 图、Conversation、SessionStore、AsyncSqliteSaver 使用真实实现。注入的 LocalModel 只产生本地预设消息，工具只返回测试数据或等待本地 Event，不运行 Bash、修改项目文件或访问网络。
 - 重启场景关闭原应用/Saver，再创建新应用与连接，不复用内存 Conversation。正常测试不 mock SQLite。只有更新时间写入失败和默认依赖组装处使用限定替身。
 - 取消型用例有等待超时和 finally 清理，退出 Manager 后再关闭 Saver；不保留测试工具任务。MCP 发现一律不启动真实服务，默认 lifespan 用 AsyncMock 返回空工具列表。

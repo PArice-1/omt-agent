@@ -1,14 +1,16 @@
 # Agent 与同步/异步 v3 流测试说明
 
+本文中的模块级命令在仓库的 `backend/` 目录执行；根目录命令见 [开发说明](../../development.md).
+
 ## 对象与目的
 
-对象是 [Agent 包装](../../src/omt/agent/agent.py)。测试验证包装是否保留底层调用语义，以及同步/异步 v3 是否仍是懒执行、可投影和可清理的原始流，而非包装层自行拼装的事件列表。
+对象是 [Agent 包装](../../../backend/src/omt/agent/agent.py)。测试验证包装是否保留底层调用语义，以及同步/异步 v3 是否仍是懒执行、可投影和可清理的原始流，而非包装层自行拼装的事件列表。
 
 测试：
 
-- [test_agent.py](../../tests/test_agent.py)
-- [test_agent_stream.py](../../tests/test_agent_stream.py)
-- [test_agent_async.py](../../tests/test_agent_async.py)
+- [test_agent.py](../../../backend/tests/test_agent.py)
+- [test_agent_stream.py](../../../backend/tests/test_agent_stream.py)
+- [test_agent_async.py](../../../backend/tests/test_agent_async.py)
 
 ## 场景
 

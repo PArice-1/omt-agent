@@ -426,25 +426,13 @@ def test_default_lifespan_builds_dependencies_once_and_cleans_up(
     assert response.json()["error"]["code"] == "manager_closed"
 
 
-def test_api_mcp_uses_local_default_without_cli_override(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_api_mcp_is_optional_and_ignores_cli_plugins(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("OMT_API_MCP_SERVERS")
-    monkeypatch.setenv("OMT_CLI_MCP_SERVERS", "{}")
-    servers = ApiSettings().mcp_servers
-    assert set(servers) == {"knowledge"}
-    root = Path("/home/laterain/Projects/Agent/rag-mcp")
-    source = Path("/home/laterain/.omt/knowledge-database")
-    assert servers["knowledge"].connection() == {
-        "transport": "stdio", "command": str(root / ".venv" / "bin" / "python"),
-        "args": [
-            "-m", "rag_mcp.mcp.server", "--build-on-start",
-            "--source", str(source), "--db-path", str(source / "storage"),
-            "--collection", "knowledge",
-        ],
-        "cwd": str(root), "env": None,
-    }
+    monkeypatch.setenv("OMT_CLI_MCP_SERVERS", '{"local": {"transport": "stdio", "command": "fake-server"}}')
+    assert ApiSettings().mcp_servers == {}
 
 
-def test_api_mcp_environment_can_disable_default(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_api_mcp_environment_can_disable_plugin(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OMT_API_MCP_SERVERS", "{}")
     monkeypatch.setenv("OMT_CLI_MCP_SERVERS", '{"local": {"transport": "stdio", "command": "fake-server"}}')
     assert ApiSettings().mcp_servers == {}

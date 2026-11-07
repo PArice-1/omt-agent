@@ -1,9 +1,11 @@
 # Ollama 本地模型适配测试说明
 
+本文中的模块级命令在仓库的 `backend/` 目录执行；根目录命令见 [开发说明](../../development.md).
+
 ## 对象与目的
 
-- 源码：[ollama.py](../../src/omt/ai/models/ollama.py)、[models_manager.py](../../src/omt/ai/models_manager.py)。
-- 测试：[test_ollama.py](../../tests/ai/test_ollama.py)。
+- 源码：[ollama.py](../../../backend/src/omt/ai/models/ollama.py)、[models_manager.py](../../../backend/src/omt/ai/models_manager.py)。
+- 测试：[test_ollama.py](../../../backend/tests/ai/test_ollama.py)。
 - 目标：新增厂商使用 Ollama 原生协议和 ChatOllama，而非把本地服务误当 DeepSeek/OpenAI；底层无需 Key，模型构造默认不联网；保留完整模型标签及 SDK 原生选项，不把 DeepSeek 的思考等级自动套用到本地模型。
 - 当前已打通 core/CLI/TUI/HTTP 的免 Key 配置，修复先前仅底层免 Key、上层仍强制登录的问题。相关预览/保存/重启/切换/取消用例见 [模型登录测试](model-login.md)、[TUI 测试](tui.md)、[HTTP 运行配置测试](api-runtime-streaming.md) 和 [组装测试](session-and-config.md)；本页侧重适配层。
 
@@ -23,7 +25,7 @@
 | HTTP、网络、读取失败和重定向 | 受控 HTTPError、URLError、IncompleteRead；错误含假敏感标记 | 安全异常，不回显内部详情；有响应时关闭，不允许重定向改变目标 | test_catalog_errors_do_not_leak_and_http_resources_are_closed |
 | 不安全的目录地址 | 地址带用户名密码、查询参数或片段 | 打开 HTTP 前拒绝，错误不含地址中的假秘密 | test_catalog_rejects_embedded_auth_query_and_fragment |
 
-厂商列表回归同步更新 [test_model_catalog.py](../../tests/ai/test_model_catalog.py) 的 `test_catalog_uses_provider_default_or_explicit_low_level_prefix`，预期精确注册 DeepSeek/Ollama 两项；DeepSeek 原协议和凭据发送规则不变。HTTP 的无配置厂商枚举同步见 [HTTP 运行配置测试](api-runtime-streaming.md)。
+厂商列表回归同步更新 [test_model_catalog.py](../../../backend/tests/ai/test_model_catalog.py) 的 `test_catalog_uses_provider_default_or_explicit_low_level_prefix`，预期精确注册 DeepSeek/Ollama 两项；DeepSeek 原协议和凭据发送规则不变。HTTP 的无配置厂商枚举同步见 [HTTP 运行配置测试](api-runtime-streaming.md)。
 
 ## 隔离方式
 

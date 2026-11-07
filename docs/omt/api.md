@@ -1,5 +1,7 @@
 # 本机 FastAPI 接口
 
+本文中的模块级命令在仓库的 `backend/` 目录执行；根目录命令见 [开发说明](../development.md).
+
 HTTP 与 CLI 共用 SessionRuntime、SessionManager 和 SQLite 检查点。HTTP 支持首次模型配置、运行中切换、普通 JSON 运行及 SSE 流式运行。完整字段、OMT v1 事件协议、事件到界面的更新规则与浏览器示例见[前端接入 API 文档](frontend-api.md)；前后端如何实现同一次 HTTP 响应的增量发送与读取，见[流式输出如何实现](frontend-api.md#流式输出如何实现)。
 
 > 仅面向可信本机、单用户、单进程。当前没有启用访问令牌认证；工具拥有当前用户的文件和进程权限，没有沙箱或执行审批。不要向不可信网络开放。
@@ -19,7 +21,7 @@ uv run omt-api
 - **通过 HTTP 确认首次配置**：保存模型配置后显式初始化缺失数据库，再启用 Runtime。已有文件不修复、不迁移；保存和启用分别报告结果。
 - 模型文件仍为 `~/.omt/agent/settings.json`、`auth.json`、`model-store.json`。读取状态、模型列表和预览目录不会修改它们。
 
-手动配置及预建数据库说明见[快速开始](../README.md)。如果首次启用失败，可检查问题后重新预览、确认；预览支持复用已保存 Key。
+手动配置及预建数据库说明见[快速开始](../../backend/README.md)。如果首次启用失败，可检查问题后重新预览、确认；预览支持复用已保存 Key。
 
 ### 启动配置
 
@@ -32,7 +34,7 @@ uv run omt-api
 | `WORKSPACE_PATH` | 启动 cwd，必须与实际目录一致，不是沙箱 |
 | `MAX_CONCURRENT_RUNS` | `1`，正整数；满载立即 429，不排队，不限制图内部工具并发 |
 | `SKILL_ROOTS` | `["~/.agents/skills"]`；JSON 数组替换，`[]` 关闭发现 |
-| `MCP_SERVERS` | 本机测试默认 `knowledge` stdio 服务；JSON 对象可替换，`{}` 关闭；不接受请求修改 |
+| `MCP_SERVERS` | 默认 `{}`，通过 JSON 对象显式启用插件；不接受请求修改 |
 | `STREAM_BUFFER_EVENTS` | `256`，正整数；积压业务事件数上限 |
 | `STREAM_BUFFER_BYTES` | `1048576`，至少 1024；积压编码后字节数及单条事件上限 |
 | `STREAM_SEND_TIMEOUT` | `30.0` 秒，正数；单次 ASGI 发送等待上限，不是整轮运行超时 |
@@ -42,7 +44,7 @@ uv run omt-api
 
 SSE 缓冲不包含底层 SDK/图流自己的内部缓冲，不是整个进程的内存限制。网络中正在发送的一条事件和单独终态也有有限的额外占用。超限时终止本轮，不截断或静默丢弃正文。
 
-API 为本机测试在 [api/settings.py](../src/omt/api/settings.py) 的 `_default_mcp_servers()` 中默认启用 `knowledge`：使用 `/home/laterain/Projects/Agent/rag-mcp/.venv/bin/python -m rag_mcp.mcp.server`，通过 `--build-on-start` 对 `/home/laterain/.omt/knowledge-database` 增量构建，存储位于其 `storage` 子目录，集合为 `knowledge`。路径不适用于其他机器时，应先修改或用 `OMT_API_MCP_SERVERS='{}'` 关闭。该环境变量只影响 API，不影响 CLI。
+API 默认不挂载 MCP 插件，未安装 knowledge_base 也能启动。通过 OMT_API_MCP_SERVERS 显式启用，或设为 `{}` 关闭；该变量只影响 API。示例见 [插件接入](../knowledge_base/plugin.md)，CLI/API 各自启动的插件不能共用同一个 Qdrant 本地存储目录。
 
 CLI 与 API 指向同一本地存储时，不要同时运行两者的 MCP 构建或连接，以免争用 Qdrant 存储锁。仅创建配置对象不会启动服务；运行环境初始化时才会发现 MCP 工具。
 

@@ -1,5 +1,7 @@
 # 交互式 CLI 与 TUI
 
+本文中的模块级命令在仓库的 `backend/` 目录执行；根目录命令见 [开发说明](../development.md).
+
 CLI 与 [HTTP](api.md) 是平级入口，共用 SessionManager 和依赖组装。CLI 不启动 HTTP 服务，也不要求 HTTP 访问令牌。
 
 ## 启动
@@ -62,12 +64,12 @@ CliSettings 使用 `OMT_CLI_` 前缀，与 `OMT_API_` 独立：
 | `WORKSPACE_PATH` | 启动 cwd；规范化后必须等于实际 cwd，不执行 chdir |
 | `MAX_CONCURRENT_RUNS` | `1`；共用 Manager 的 run 容量，不是工具并发数；CLI 本身顺序输入 |
 | `SKILL_ROOTS` | 默认 `["~/.agents/skills"]`（启动时展开为绝对路径）；JSON 数组可替换，`[]` 关闭发现 |
-| `MCP_SERVERS` | 本机测试默认 `knowledge` stdio 服务；JSON 对象可替换，`{}` 关闭 |
+| `MCP_SERVERS` | 默认 `{}`，通过 JSON 对象显式启用 MCP 插件 |
 
-CLI/TUI 为本机测试临时恢复默认 `knowledge` MCP，配置在 [cli/settings.py](../src/omt/cli/settings.py) 的 `_default_mcp_servers()`：目录 `/home/laterain/Projects/Agent/rag-mcp`，使用其 `.venv/bin/python -m rag_mcp.mcp.server` 启动，并通过 `--build-on-start` 增量构建 `/home/laterain/.omt/knowledge-database`，存储位于该目录的 `storage` 子目录，集合为 `knowledge`。可直接修改该处的目录、command 和 args，重启后生效；路径不适用于其他机器，应修改或显式关闭，否则运行环境初始化可能失败。HTTP 也在自己的 api/settings.py 中配置同一个本机测试服务，通过 OMT_API_MCP_SERVERS 独立覆盖；两者指向相同存储时不要同时启动，以免争用存储锁。MCP 字段与类型见 [HTTP 启动配置](api.md#启动配置)，但 CLI 使用自己的环境变量前缀。
+CLI/TUI 默认不挂载 MCP 插件，未安装 knowledge_base 也可正常启动。通过 OMT_CLI_MCP_SERVERS 显式配置，字段见 [HTTP 启动配置](api.md#启动配置)，接入示例见 [知识库插件](../knowledge_base/plugin.md)。CLI/API 配置互不继承；不同进程不能同时打开同一个 Qdrant 本地目录。
 
 ```bash
-# 显式关闭 CLI/TUI 默认 MCP；不影响 HTTP 配置。
+# 显式关闭 CLI/TUI 的 MCP 插件；不影响 HTTP 配置。
 export OMT_CLI_MCP_SERVERS='{}'
 export OMT_CLI_DB_PATH="$HOME/.omt/agent/state/omt.sqlite"
 uv run omt

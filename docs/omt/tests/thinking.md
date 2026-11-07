@@ -1,9 +1,11 @@
 # CLI 推理强度与运行时重建测试说明
 
+本文中的模块级命令在仓库的 `backend/` 目录执行；根目录命令见 [开发说明](../../development.md).
+
 ## 对象与目的
 
-- 源码：[bootstrap.py](../../src/omt/core/bootstrap.py) 的 SessionRuntime/open_session_runtime/ThinkingStatus、[session_manager.py](../../src/omt/core/session_manager.py) 的 rebuild，以及 [CLI](../../src/omt/cli/) 的命令与展示。
-- 测试：[test_thinking.py](../../tests/cli/test_thinking.py)。
+- 源码：[bootstrap.py](../../../backend/src/omt/core/bootstrap.py) 的 SessionRuntime/open_session_runtime/ThinkingStatus、[session_manager.py](../../../backend/src/omt/core/session_manager.py) 的 rebuild，以及 [CLI](../../../backend/src/omt/cli) 的命令与展示。
+- 测试：[test_thinking.py](../../../backend/tests/cli/test_thinking.py)。
 - 保证修改强度不只是更新显示：Model、Agent、Manager 必须重建，下一轮真正使用新模型，同时保留会话历史、工具和内存失败保护。
 
 ## 场景
@@ -26,7 +28,7 @@
 
 ## 隔离方式
 
-沿用 [CLI fixture](../../tests/cli/conftest.py) 隔离 settings.root、cwd、数据库、Skills 和 MCP。每例三份 JSON 只含保留域名和假 Key，清除相关模型设置环境变量；SDK 初始化仅返回不同的 RecordingModel，不访问网络。SQLite、Agent 图和历史装载使用真实实现。
+沿用 [CLI fixture](../../../backend/tests/cli/conftest.py) 隔离 settings.root、cwd、数据库、Skills 和 MCP。每例三份 JSON 只含保留域名和假 Key，清除相关模型设置环境变量；SDK 初始化仅返回不同的 RecordingModel，不访问网络。SQLite、Agent 图和历史装载使用真实实现。
 
 只有 MCP 发现、SDK/Agent 初始化失败及流创建失败用限定替身；MCP marker 是测试内本地工具，不启动服务。等待和取消均用 asyncio.Event、超时及 finally/gather 回收测试任务；所有文件只写 tmp_path。
 

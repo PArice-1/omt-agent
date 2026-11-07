@@ -1,9 +1,11 @@
 # CLI /resume 会话选择与恢复测试说明
 
+本文中的模块级命令在仓库的 `backend/` 目录执行；根目录命令见 [开发说明](../../development.md).
+
 ## 对象与目的
 
-- 源码：[cli/commands.py](../../src/omt/cli/commands.py)、[cli/app.py](../../src/omt/cli/app.py)，通过 [SessionManager](../../src/omt/core/session_manager.py) 查询和激活会话。
-- 测试：[test_resume.py](../../tests/cli/test_resume.py)，随 CLI 拆分迁入该目录。
+- 源码：[cli/commands.py](../../../backend/src/omt/cli/commands.py)、[cli/app.py](../../../backend/src/omt/cli/app.py)，通过 [SessionManager](../../../backend/src/omt/core/session_manager.py) 查询和激活会话。
+- 测试：[test_resume.py](../../../backend/tests/cli/test_resume.py)，随 CLI 拆分迁入该目录。
 - 防止命令被当作用户消息、编号与 ID 错配、跨目录恢复、失败切换污染当前选择，以及重复登记旧会话。
 
 ## 交互契约与变更
@@ -40,7 +42,7 @@ handle_command 返回 run / handled / exit，并只在 Manager.open_session 成�
 
 ## 隔离方式
 
-[CLI conftest](../../tests/cli/conftest.py) 同时隔离 settings.root、cwd 和配置环境变量，前后清理缓存。resume_db 显式建立 tmp_path 下 SQLite 与 sessions 表，注入真实 Manager/Agent/AsyncSqliteSaver，只使用本地 FakeListChatModel 与关闭的 Skills/MCP。输入和 PromptSession 用替身，不触碰用户终端或凭据。
+[CLI conftest](../../../backend/tests/cli/conftest.py) 同时隔离 settings.root、cwd 和配置环境变量，前后清理缓存。resume_db 显式建立 tmp_path 下 SQLite 与 sessions 表，注入真实 Manager/Agent/AsyncSqliteSaver，只使用本地 FakeListChatModel 与关闭的 Skills/MCP。输入和 PromptSession 用替身，不触碰用户终端或凭据。
 
 正常路径使用真实 Store、检查点和 Manager；历史通过图 aupdate_state 写入。固定元数据时间避免 sleep。交互后重新打开 Saver，核对原 ID、上下文、命令未入历史。只有 SQLite 错误注入才替换 Store 查询/更新时间方法；编号失效测试真实更新或删除临时记录。
 

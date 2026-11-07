@@ -1,5 +1,7 @@
 # OMT
 
+本模块位于 monorepo 的 `backend/`。以下模块级命令在本目录执行，统一安装与启动见 [仓库首页](../README.md)，专题文档见 [统一导航](../docs/README.md)。
+
 一个轻量级的 Python AI Agent 应用，支持工具调用、会话持久化，以及 CLI 和 HTTP API 两种交互方式。
 
 OMT 基于 LangChain / LangGraph 构建：由模型与工具循环完成任务，由应用层管理会话、历史记录和运行生命周期。你可以在终端中与它交互，也可以通过本机 API 将它接入其他程序。
@@ -24,7 +26,7 @@ OMT 基于 LangChain / LangGraph 构建：由模型与工具循环完成任务�
 
 需要 **Python 3.12+** 和 **uv**。Bash 工具使用 POSIX 进程能力，建议在 Linux / macOS 环境运行。
 
-克隆仓库并进入仓库根目录后，安装项目及依赖：
+克隆 monorepo 并进入 `backend/` 后，安装本模块及依赖：
 
 ```bash
 uv sync
@@ -145,7 +147,7 @@ PY
 ### 4. 启动 TUI
 
 ```bash
-# 默认全屏 TUI，使用 CLI 本机测试 MCP 配置；缺少模型配置时提示 F2 / /login。
+# 默认全屏 TUI；MCP 插件默认关闭，缺少模型配置时提示 F2 / /login。
 uv run omt
 # 可选：保留原逐行交互
 uv run omt --plain
@@ -159,7 +161,7 @@ uv run omt --plain
 请分析当前项目的目录结构，暂时不要修改文件。
 ```
 
-界面以对话为主，不再使用大按钮工具栏。输入 `/` 会显示可筛选的指令提示；↑↓ 选择、Tab 补全、Enter 执行，Esc 收起。[查看界面预览](docs/cli.md#默认-tui)。
+界面以对话为主，不再使用大按钮工具栏。输入 `/` 会显示可筛选的指令提示；↑↓ 选择、Tab 补全、Enter 执行，Esc 收起。[查看界面预览](../docs/omt/cli.md#默认-tui)。
 
 常用操作：
 
@@ -175,17 +177,17 @@ uv run omt --plain
 | Ctrl-Q / Ctrl-C / `/exit` | 清理资源并退出 |
 | `/help` | 查看操作指南 |
 
-逐行模式保留 `/resume N` 编号选择、裸词 `resume` 和 EOF/Ctrl-D 退出；TUI 使用选择弹窗而非编号，并拒绝未知斜杠命令。方案比较见 [GitHub TUI 调研](docs/research/tui-frameworks.md)。
+逐行模式保留 `/resume N` 编号选择、裸词 `resume` 和 EOF/Ctrl-D 退出；TUI 使用选择弹窗而非编号，并拒绝未知斜杠命令。方案比较见 [GitHub TUI 调研](../docs/omt/research/tui-frameworks.md)。
 
 首条普通消息发送前才登记新会话，仅查看列表或退出不会留下空会话。恢复历史不会自动重新执行工具。
 
 文件工具和 Bash 以**进程当前工作目录**为基准。若要在其他项目中使用，先切换到目标目录，再运行：
 
 ```bash
-uv run --project /absolute/path/to/OMT omt
+uv run --project /absolute/path/to/omt-monorepo/backend omt
 ```
 
-CLI/TUI 暂时在 `src/omt/cli/settings.py` 内置本机测试用 `knowledge` MCP；请按本机情况修改 `_default_mcp_servers()`，或用 `OMT_CLI_MCP_SERVERS` 替换配置、设为 `'{}'` 关闭。更多交互与失败处理约定见 [CLI 使用说明](docs/cli.md)。
+CLI/TUI 默认不挂载 MCP，未安装知识库也能使用。通过 OMT_CLI_MCP_SERVERS 显式启用插件；示例见 [插件接入](../docs/knowledge_base/plugin.md)。更多交互约定见 [CLI 使用说明](../docs/omt/cli.md)。
 
 ## HTTP API
 
@@ -196,7 +198,7 @@ CLI/TUI 暂时在 `src/omt/cli/settings.py` 内置本机测试用 `knowledge` MC
 uv run omt-api
 ```
 
-默认监听 `127.0.0.1:8000`，使用单 worker。API 也在 `src/omt/api/settings.py` 默认启用本机测试 `knowledge` MCP，可用 `OMT_API_MCP_SERVERS='{}'` 关闭；与 CLI 共用本地 MCP 存储时不要同时启动，以免争用存储锁；当前已暂时停用访问令牌校验，即使配置令牌也不会自动恢复认证。DeepSeek 等认证厂商仍需配置模型 Key，Ollama 无需。后端及前端代理均只应面向可信本机使用，不要向不可信网络开放。
+默认监听 `127.0.0.1:8000`，使用单 worker。API 默认不挂载 MCP，可用 OMT_API_MCP_SERVERS 显式启用；配置与 CLI 独立。同一本地 Qdrant 目录不能由多个插件进程同时持有。当前 HTTP 免 Bearer 认证，仅供可信本机使用；厂商模型认证要求保持不变。
 
 先通过 `GET /api/v1/runtime` 确认 ready=true；未就绪时按 API 文档完成配置。就绪后可以检查服务并创建会话：
 
@@ -217,7 +219,7 @@ curl -sS "http://127.0.0.1:8000/api/v1/sessions/$SESSION_ID/runs" \
   -d '{"message":"请分析当前项目结构，暂不修改文件"}'
 ```
 
-原 `/runs` 等待本轮结束后返回最终回答；使用 `curl -N` 请求 `/runs/stream` 可持续接收正文、reasoning 和工具事件。`GET /api/v1/runtime` 查询当前配置，`GET /api/v1/models` 获取本地快捷模型列表；快速切换不保存配置。断开流式连接会尝试取消，不回滚工具副作用。完整请求、事件和错误见 [HTTP 使用说明](docs/api.md)与[前端接入 API 文档](docs/frontend-api.md)。`/docs`、`/redoc` 和 `/openapi.json` 已开放；没有后台任务或独立取消接口。
+原 `/runs` 等待本轮结束后返回最终回答；使用 `curl -N` 请求 `/runs/stream` 可持续接收正文、reasoning 和工具事件。`GET /api/v1/runtime` 查询当前配置，`GET /api/v1/models` 获取本地快捷模型列表；快速切换不保存配置。断开流式连接会尝试取消，不回滚工具副作用。完整请求、事件和错误见 [HTTP 使用说明](../docs/omt/api.md)与[前端接入 API 文档](../docs/omt/frontend-api.md)。`/docs`、`/redoc` 和 `/openapi.json` 已开放；没有后台任务或独立取消接口。
 
 ## 配置与扩展
 
@@ -238,7 +240,7 @@ curl -sS "http://127.0.0.1:8000/api/v1/sessions/$SESSION_ID/runs" \
 export OMT_CLI_SKILL_ROOTS='["./skills"]'
 ```
 
-Skills 仅提供元数据发现与按需读取提示，不会自动执行其中的脚本。MCP 连接参数与 Skills 加载规则分别见 [HTTP 配置](docs/api.md#启动配置)和 [架构说明](docs/architecture.md)。
+Skills 仅提供元数据发现与按需读取提示，不会自动执行其中的脚本。MCP 连接参数与 Skills 加载规则分别见 [HTTP 配置](../docs/omt/api.md#启动配置)和 [架构说明](../docs/omt/architecture.md)。
 
 ## 项目结构
 
@@ -250,9 +252,10 @@ Skills 仅提供元数据发现与按需读取提示，不会自动执行其中�
 │   ├── api/     # FastAPI 入口与路由，当前暂未启用认证
 │   ├── cli/     # 终端交互、命令与输出展示
 │   └── core/    # 会话管理、存储、配置、工具与 Skills
-├── tests/       # 离线测试
-└── docs/        # 使用说明、架构与测试说明
+└── tests/       # 离线测试
 ```
+
+使用说明、架构与测试说明统一维护在仓库根目录的 `docs/omt/`。
 
 ## 开发与验证
 
@@ -270,7 +273,7 @@ git diff --check
 basedpyright --pythonpath .venv/bin/python src/omt/core/settings.py
 ```
 
-协作约定见 [AGENTS.md](AGENTS.md)，测试隔离和用例说明见 [测试文档](docs/tests/README.md)。启动 CLI / API 不是离线测试，不要用真实模型请求代替默认验证。
+协作约定见 [AGENTS.md](AGENTS.md)，测试隔离和用例说明见 [测试文档](../docs/omt/tests/README.md)。启动 CLI / API 不是离线测试，不要用真实模型请求代替默认验证。
 
 ## 当前边界
 
@@ -282,8 +285,8 @@ basedpyright --pythonpath .venv/bin/python src/omt/core/settings.py
 
 ## 文档
 
-- [文档导航](docs/README.md)
-- [CLI 使用说明](docs/cli.md)
-- [HTTP API 使用说明](docs/api.md)
-- [架构与模块职责](docs/architecture.md)
-- [测试说明与索引](docs/tests/README.md)
+- [文档导航](../docs/omt/README.md)
+- [CLI 使用说明](../docs/omt/cli.md)
+- [HTTP API 使用说明](../docs/omt/api.md)
+- [架构与模块职责](../docs/omt/architecture.md)
+- [测试说明与索引](../docs/omt/tests/README.md)
