@@ -37,13 +37,13 @@
 
 test_cli_and_http_share_one_manager_without_leaking_terminal_output 使用同一事件循环和 Manager：HTTP 创建空会话，CLI /resume 后执行一轮，再由 HTTP 追加。预期同一 ID 的用户/助手四条消息完整且无重复；CLI 回答只打印一次，后续 HTTP 回答没有终端输出。它验证单轮事件回调隔离与共用历史规则，不验证两个独立进程共享锁。
 
-共用配置类型来自 core.configuration。默认 lifespan 现在由 ApiRuntime 委托 bootstrap.open_session_runtime，支持未配置状态和可切换模型；原组装测试补齐三份假配置，继续验证每次生命周期仅初始化一次、MCP/系统提示词及退出清理。注入 manager_factory 的原 JSON/共享 CLI 测试仍验证固定 Manager 兼容，不读取模型配置。首次配置、SSE 与 HTTP 切换另见[运行配置与流式测试](api-runtime-streaming.md)。
+共用配置类型来自 core.configuration。默认 lifespan 现在由 ApiRuntime 委托 bootstrap.open_session_runtime，支持未配置状态和可切换模型；原组装测试补齐三份假配置，继续验证每次生命周期仅初始化一次、MCP/系统提示词及退出清理。原 JSON/共享 CLI 测试改为通过唯一的 runtime_factory 注入真实 SessionRuntime，并在临时目录准备完整假配置；HTTP 不再提供固定 Manager 注入。CLI 的既有注入方式不变，共享用例中的 HTTP Runtime 持有 CLI 借用的同一个 Manager。首次配置、SSE 与 HTTP 切换另见[运行配置与流式测试](api-runtime-streaming.md)。
 
 ## 隔离方式
 
 - 模块级自动 fixture 将 cwd、settings.root 指向 tmp_path，前后清理模型设置缓存，移除本组使用的宿主配置环境变量，并用 OMT_API_MCP_SERVERS={} 显式关闭 MCP 插件。仅默认值专项删除该变量，验证未配置时为空，不访问服务目录或建立连接。所有数据库均由测试显式建表，不读取本机配置或凭据。
 - MCP 按插件方式显式配置；默认值专项验证未设置变量时为空，错误配置仍拒绝，不回退到任何隐式服务。
-- HTTP 使用 TestClient，不监听端口；LangGraph 图、Conversation、SessionStore、AsyncSqliteSaver 使用真实实现。注入的 LocalModel 只产生本地预设消息，工具只返回测试数据或等待本地 Event，不运行 Bash、修改项目文件或访问网络。
+- HTTP 使用 TestClient，不监听端口；LangGraph 图、Conversation、SessionStore、AsyncSqliteSaver 使用真实实现。注入的 SessionRuntime 使用 LocalModel，只产生本地预设消息，工具只返回测试数据或等待本地 Event，不运行 Bash、修改项目文件或访问网络。
 - 重启场景关闭原应用/Saver，再创建新应用与连接，不复用内存 Conversation。正常测试不 mock SQLite。只有更新时间写入失败和默认依赖组装处使用限定替身。
 - 取消型用例有等待超时和 finally 清理，退出 Manager 后再关闭 Saver；不保留测试工具任务。MCP 发现一律不启动真实服务，默认 lifespan 用 AsyncMock 返回空工具列表。
 

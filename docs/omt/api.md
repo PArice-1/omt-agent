@@ -121,7 +121,7 @@ curl -N "http://127.0.0.1:8000/api/v1/sessions/$SESSION_ID/runs/stream" \
 | HTTP | code |
 | --- | --- |
 | 404 | `session_not_found`、`login_preview_not_found`（含过期） |
-| 409 | `session_busy`、`session_incomplete`、`manager_busy`、`configuration_invalid`、`runtime_immutable` |
+| 409 | `session_busy`、`session_incomplete`、`manager_busy`、`configuration_invalid` |
 | 422 | `invalid_request`、`invalid_model`、`invalid_thinking_level`、`login_preview_failed` |
 | 429 | `capacity_exceeded`、`login_capacity_exceeded` |
 | 502 | `run_failed`、`model_change_failed` |
@@ -139,6 +139,6 @@ SSE 接纳前返回普通 HTTP 错误；`run.started` 表示完成占位及历�
 - 同步工具线程或外部进程不保证立即停止。普通 JSON 断线仍不保证立即取消。
 - 无后台运行台账、按 run_id 查询、幂等、重连补发或自动恢复执行。不得自动重试运行请求。
 
-`create_app(manager_factory=...)` 保留嵌入兼容：固定 Manager 模式不读取模型配置，`mutable=false`、thinking 为 null，配置与切换接口返回 `runtime_immutable`；会话 JSON/SSE 仍可用。默认入口及 `runtime_factory=...` 使用可切换 Runtime，两种工厂不能同时注入。
+`create_app(runtime_factory=...)` 是唯一的依赖注入入口，工厂返回 SessionRuntime 的异步上下文管理器，默认使用 bootstrap.open_session_runtime。API 不再接受 manager_factory 或 fixed_manager；嵌入方与测试也统一提供 SessionRuntime，并遵守相同的配置检查、切换保护及退出清理流程。`mutable` 字段保留且恒为 true；未就绪时 thinking 为 null，就绪后的 JSON/SSE 使用真实运行配置。
 
 离线证据见 [HTTP 测试](tests/api.md)及[运行配置与流协议测试](tests/api-runtime-streaming.md)。

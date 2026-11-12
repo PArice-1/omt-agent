@@ -34,17 +34,14 @@ class _Preview:
 class ApiRuntime:
     """在 HTTP 入口协调运行设置、有限的临时登录预览和关闭清理。
 
-    factory 创建可替换的 SessionRuntime；fixed_manager 为嵌入/旧测试提供固定实例，
-    此模式不读取模型配置、不支持配置写入和切换。预览只保存在内存，单进程有效。
+    factory 统一创建可替换的 SessionRuntime，会话操作使用其当前 Manager。
+    预览只保存在内存，单进程有效。
     """
 
-    def __init__(
-        self, options: ApiSettings, factory: RuntimeFactory, *,
-        fixed_manager: SessionManager | None = None,
-    ) -> None:
+    def __init__(self, options: ApiSettings, factory: RuntimeFactory) -> None:
+        """保存启动选项与 Runtime 工厂；实际资源在配置就绪后才创建。"""
         self.options: ApiSettings = options
         self.factory: RuntimeFactory = factory
-        self._fixed: SessionManager | None = fixed_manager
         self._runtime: bootstrap.SessionRuntime | None = None
         self._stack: AsyncExitStack = AsyncExitStack()
         self._changing: bool = False
@@ -59,15 +56,12 @@ class ApiRuntime:
         """无配置时保持可配置状态；已有配置的初始化失败也不关闭配置入口。"""
         if self.options.workspace_path != Path.cwd().resolve() or not self.options.workspace_path.is_dir():
             raise ValueError("工作目录必须与启动进程的当前目录一致")
-        if self._fixed is None:
-            status = configuration.check_model_configuration()
-            self._message = status.message
-            if status.ready:
-                error = await self._activate()
-                if error is not None:
-                    self._message = error.message
-        else:
-            self._message = "固定 Manager 已就绪，不支持模型配置"
+        status = configuration.check_model_configuration()
+        self._message = status.message
+        if status.ready:
+            error = await self._activate()
+            if error is not None:
+                self._message = error.message
 
     async def _activate(self) -> OperationError | None:
         if self._runtime is not None:
@@ -87,27 +81,22 @@ class ApiRuntime:
         self._message = "运行环境已就绪"
         return None
 
-    def _manager(self) -> SessionManager | None:
-        return self._runtime.manager if self._runtime is not None else self._fixed
+    def acquire_manager(self) -> SessionManager:
+        """检查可用性并借用当前 Manager，请求结束时必须调用 release_manager。
 
-    async def require_manager(self) -> SessionManager:
-        """每次操作取最新 Manager；切换期间拒绝向旧实例派发新工作。"""
+        检查、取值和借用登记之间不让出事件循环，防止请求尚未占位时被切换交接。
+        """
         if self._closed:
             raise SessionError("manager_closed", "服务正在关闭")
         if self._changing:
             raise SessionError("manager_busy", "正在修改运行设置")
-        manager = self._manager()
-        if manager is None:
+        if self._runtime is None:
             raise SessionError("runtime_not_ready", "请先完成模型配置并启用运行环境")
-        return manager
-
-    async def acquire_manager(self) -> SessionManager:
-        """请求期间借用当前 Manager，阻止接纳尚未占位时被并行切换交接。"""
-        manager = await self.require_manager()
         self._leases += 1
-        return manager
+        return self._runtime.manager
 
     def release_manager(self) -> None:
+        """结束一次请求借用，仅更新计数，不关闭 Runtime 持有的 Manager。"""
         self._leases -= 1
 
     def thinking(self) -> ThinkingResponse | None:
@@ -119,31 +108,30 @@ class ApiRuntime:
                                 available_levels=list(state.available_levels))
 
     def status(self) -> RuntimeResponse:
-        manager = self._manager()
-        configured = False if self._fixed is not None else configuration.check_model_configuration().ready
+        manager = self._runtime.manager if self._runtime is not None else None
+        configured = configuration.check_model_configuration().ready
         return RuntimeResponse(
             configured=configured, ready=manager is not None and not self._closed,
-            mutable=self._fixed is None, changing=self._changing,
+            mutable=True, changing=self._changing,
             busy=self._changing or bool(self._leases) or (manager.busy if manager is not None else False),
             running=manager.running if manager is not None else 0,
             thinking=self.thinking(), message=self._message,
         )
 
-    def _ensure_mutable(self) -> None:
+    def _ensure_open(self) -> None:
+        """关闭开始后拒绝新的配置查询和修改。"""
         if self._closed:
             raise SessionError("manager_closed", "服务正在关闭")
-        if self._fixed is not None:
-            raise SessionError("runtime_immutable", "注入的固定 Manager 不支持模型配置")
 
     def _begin_change(self) -> None:
-        self._ensure_mutable()
-        manager = self._manager()
+        self._ensure_open()
+        manager = self._runtime.manager if self._runtime is not None else None
         if self._changing or self._leases or (manager is not None and manager.busy):
             raise SessionError("manager_busy", "正在切换设置或处理会话操作")
         self._changing = True
 
     def providers(self) -> list[ProviderResponse]:
-        self._ensure_mutable()
+        self._ensure_open()
         try:
             return [ProviderResponse(provider=name, logged_in=configuration.is_provider_logged_in(name),
                                      requires_api_key=configuration.provider_requires_api_key(name))
@@ -152,7 +140,7 @@ class ApiRuntime:
             raise SessionError("configuration_invalid", "本地模型配置无法读取，请检查配置") from exc
 
     def models(self) -> list[ModelResponse]:
-        self._ensure_mutable()
+        self._ensure_open()
         current = self.thinking()
         try:
             return [ModelResponse(provider=item.provider, model=item.model,
@@ -229,7 +217,7 @@ class ApiRuntime:
 
         预览限量且过期；Key 不落盘、不进入响应，失败或取消释放名额。
         """
-        self._ensure_mutable()
+        self._ensure_open()
         self._expire()
         if len(self._previews) + self._preparing >= self.options.login_preview_limit:
             raise SessionError("login_capacity_exceeded", "配置预览数量已达上限，请稍后重试")
@@ -296,7 +284,7 @@ class ApiRuntime:
                                        message="配置已保存，但运行配置未更新；原运行实例保持不变")
             self._message = error.message if error is not None else "运行环境已就绪"
             self._changing = False
-            return LoginConfirmResponse(configuration_saved=True, runtime_ready=self._manager() is not None,
+            return LoginConfirmResponse(configuration_saved=True, runtime_ready=self._runtime is not None,
                                         runtime=self.status(), error=error)
         finally:
             self._changing = False

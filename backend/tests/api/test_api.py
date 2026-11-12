@@ -24,7 +24,7 @@ from omt.agent.agent import Agent
 from omt.api.app import create_app
 from omt.api.settings import ApiSettings
 from omt.core.configuration import StdioServerSettings, HttpServerSettings
-from omt.core import bootstrap, settings as settings_module
+from omt.core import bootstrap, model_configuration, settings as settings_module
 from omt.ai.model import Model
 from omt.core.session_manager import SessionError, SessionManager
 from omt.core.store import SessionStore
@@ -89,19 +89,29 @@ def options(database: Path, tmp_path: Path) -> ApiSettings:
 
 
 def application(options: ApiSettings, model: LocalModel, tools: Sequence[BaseTool] = ()) -> FastAPI:
+    """注入真实 SessionRuntime 和本地模型；配置与数据库均位于测试临时目录。"""
+    _ = model_configuration.save_model_login(
+        model_configuration.ModelLogin(provider="deepseek", api_key=SecretStr("test-only-key"),
+                                       model_name="test-model"), model_names=["test-model"],
+    )
+
     @asynccontextmanager
-    async def factory(config: ApiSettings) -> AsyncGenerator[SessionManager]:
+    async def factory(config: ApiSettings) -> AsyncGenerator[bootstrap.SessionRuntime]:
+        """保持真实 Runtime/Manager/Saver 生命周期，只替换模型和工具输入。"""
         async with AsyncSqliteSaver.from_conn_string(str(config.db_path)) as saver:
             manager = SessionManager(
                 Agent(model, tools=tools, checkpointer=saver), SessionStore(config.db_path),
                 workspace_path=config.workspace_path, system_prompt="私有系统提示词",
                 skill_roots=[], max_concurrent_runs=config.max_concurrent_runs,
             )
+            selection = settings_module.load_settings()
+            definition = settings_module.load_model_store()[selection.defaultProvider].models[0]
+            runtime = bootstrap.SessionRuntime(manager, selection, definition, saver, tools)
             try:
-                yield manager
+                yield runtime
             finally:
-                await manager.aclose()
-    return create_app(options, manager_factory=factory)
+                await runtime.aclose()
+    return create_app(options, runtime_factory=factory)
 
 
 def new_session(client: TestClient) -> str:
@@ -483,6 +493,11 @@ def test_cli_and_http_share_one_manager_without_leaking_terminal_output(
     from omt.cli.app import run_cli
     from omt.cli.settings import CliSettings
 
+    _ = model_configuration.save_model_login(
+        model_configuration.ModelLogin(provider="deepseek", api_key=SecretStr("test-only-key"),
+                                       model_name="test-model"), model_names=["test-model"],
+    )
+
     async def execute() -> None:
         async with AsyncSqliteSaver.from_conn_string(str(options.db_path)) as saver:
             model = LocalModel(responses=[AIMessage(content="CLI 回答"), AIMessage(content="HTTP 回答")])
@@ -491,16 +506,20 @@ def test_cli_and_http_share_one_manager_without_leaking_terminal_output(
                 workspace_path=options.workspace_path, system_prompt="共享规则", skill_roots=[],
             )
 
+            selection = settings_module.load_settings()
+            definition = settings_module.load_model_store()[selection.defaultProvider].models[0]
+            runtime = bootstrap.SessionRuntime(manager, selection, definition, saver, [])
+
             @asynccontextmanager
-            async def http_factory(config: ApiSettings) -> AsyncGenerator[SessionManager]:
-                # 此测试由最外层拥有资源；两个入口只借用同一实例。
-                yield manager
+            async def http_factory(_config: ApiSettings) -> AsyncGenerator[bootstrap.SessionRuntime]:
+                """HTTP 只注入 Runtime；最外层持有共享资源，CLI 仍借用其 Manager。"""
+                yield runtime
 
             @asynccontextmanager
             async def cli_factory(config: CliSettings) -> AsyncGenerator[SessionManager]:
                 yield manager
 
-            app = create_app(options, manager_factory=http_factory)
+            app = create_app(options, runtime_factory=http_factory)
             try:
                 async with app.router.lifespan_context(app):
                     async with AsyncClient(transport=ASGITransport(app), base_url="http://local.test") as client:
@@ -522,5 +541,5 @@ def test_cli_and_http_share_one_manager_without_leaking_terminal_output(
                         history = await client.get(f"/api/v1/sessions/{session_id}/messages", headers=HEADERS)
                         assert [m["text"] for m in history.json()] == ["CLI 问题", "CLI 回答", "HTTP 问题", "HTTP 回答"]
             finally:
-                await manager.aclose()
+                await runtime.aclose()
     asyncio.run(execute())

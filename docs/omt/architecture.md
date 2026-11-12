@@ -66,7 +66,7 @@ CLI 和 HTTP 默认都通过 `bootstrap.open_session_runtime(options)`，由 Ses
 3. 持有一个 AsyncSqliteSaver，创建 Store 与 Manager。
 4. 退出先关闭当前 Manager，取消并等待活跃历史/运行操作，再关闭 Saver 连接。
 
-共用 SessionRuntime 提供只读 `manager`/`thinking`/`changing` 和异步 `set_thinking_level(level)`、`set_model(provider, model_name)`。前者按当前模型目录快照解析等级；后者显式重读所选模型定义和认证，保留请求思考等级，缺映射时实际按 none。两者共用重建链：初始化 Model、创建 Agent，再调用旧 Manager.rebuild(agent) 创建继任 Manager；全部成功后才发布新 Manager、设置和目录快照。构建失败/取消保持旧实例及状态；不请求模型试运行，Runtime 自身不写配置。MCP 工具复用启动发现结果，整个生命周期复用同一个 Saver。HTTP 的模型/思考设置也是进程级且不持久化；与 CLI 一样重建时保留历史和失败保护。HTTP 主动提交不可选等级时拒绝，切模型继承旧等级时允许回退。ApiRuntime 在切换前检查会话忙碌及请求借用计数，切换期间拒绝新会话操作，防止请求尚未进入 Manager 占位就被交接。create_app(manager_factory=...) 保留固定 Manager 嵌入方式，不读取额外模型配置、禁用配置/切换，JSON/SSE 仍可用；runtime_factory 与 manager_factory 不能同时注入。
+共用 SessionRuntime 提供只读 `manager`/`thinking`/`changing` 和异步 `set_thinking_level(level)`、`set_model(provider, model_name)`。前者按当前模型目录快照解析等级；后者显式重读所选模型定义和认证，保留请求思考等级，缺映射时实际按 none。两者共用重建链：初始化 Model、创建 Agent，再调用旧 Manager.rebuild(agent) 创建继任 Manager；全部成功后才发布新 Manager、设置和目录快照。构建失败/取消保持旧实例及状态；不请求模型试运行，Runtime 自身不写配置。MCP 工具复用启动发现结果，整个生命周期复用同一个 Saver。HTTP 的模型/思考设置也是进程级且不持久化；与 CLI 一样重建时保留历史和失败保护。HTTP 主动提交不可选等级时拒绝，切模型继承旧等级时允许回退。ApiRuntime 在切换前检查会话忙碌及请求借用计数，切换期间拒绝新会话操作，防止请求尚未进入 Manager 占位就被交接。HTTP 只提供 create_app(runtime_factory=...) 一个注入入口，工厂返回 SessionRuntime 的异步上下文；会话操作始终使用其中的当前 Manager，不再提供绕过 Runtime 的固定 Manager 模式。
 
 `run_cli(manager_factory=...)` 和 `OmtApp(runtime_factory=...)` 可注入固定 Manager，此时不读取额外模型配置，不支持运行中切换；也可注入提供 SessionRuntime 的异步工厂。调用方应每次通过 runtime.manager 取得最新实例，不再使用切换前的引用。
 

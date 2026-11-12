@@ -1,8 +1,8 @@
 """单用户本机 HTTP 入口；无配置可启动，资源只在 lifespan 内创建。"""
 
 import sqlite3
-from collections.abc import AsyncGenerator, Callable
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -19,15 +19,6 @@ from .schemas import HttpErrorResponse
 from .settings import ApiSettings
 
 
-@asynccontextmanager
-async def open_manager(options: ApiSettings) -> AsyncGenerator[SessionManager]:
-    async with bootstrap.open_session_manager(options) as manager:
-        yield manager
-
-
-ManagerFactory = Callable[[ApiSettings], AbstractAsyncContextManager[SessionManager]]
-
-
 def error_response(status: int, code: str, message: str, run_id: str | None = None) -> JSONResponse:
     error = {"code": code, "message": message}
     if run_id is not None:
@@ -39,40 +30,29 @@ def error_response(status: int, code: str, message: str, run_id: str | None = No
 
 
 def create_app(
-    options: ApiSettings | None = None, *, manager_factory: ManagerFactory | None = None,
-    runtime_factory: RuntimeFactory | None = None,
+    options: ApiSettings | None = None, *, runtime_factory: RuntimeFactory | None = None,
 ) -> FastAPI:
-    """默认持有可切换 Runtime；manager_factory 保留固定 Manager 的嵌入兼容。
+    """统一通过 SessionRuntime 管理会话与模型设置。
 
-    固定 Manager 模式不读取模型配置，也不支持首次配置或切换；两种工厂不能同时注入。
+    runtime_factory 可注入返回 SessionRuntime 的异步上下文工厂，默认使用共用组装；
+    仅在配置就绪后进入上下文，并在应用退出时清理，不提供独立的 Manager 注入路径。
     """
     options = options or ApiSettings()
-    if manager_factory is not None and runtime_factory is not None:
-        raise ValueError("不能同时注入 Manager 和 Runtime 工厂")
     active_factory = runtime_factory or bootstrap.open_session_runtime
     runtime: ApiRuntime | None = None
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
         nonlocal runtime
+        runtime = ApiRuntime(options, active_factory)
         try:
-            if manager_factory is not None:
-                async with manager_factory(options) as manager:
-                    runtime = ApiRuntime(options, active_factory, fixed_manager=manager)
-                    try:
-                        await runtime.start()
-                        yield
-                    finally:
-                        await runtime.aclose()
-            else:
-                runtime = ApiRuntime(options, active_factory)
-                try:
-                    await runtime.start()
-                    yield
-                finally:
-                    await runtime.aclose()
+            await runtime.start()
+            yield
         finally:
-            runtime = None
+            try:
+                await runtime.aclose()
+            finally:
+                runtime = None
 
     app = FastAPI(
         title="OMT", version="0.1.0", lifespan=lifespan,
@@ -86,7 +66,7 @@ def create_app(
 
     async def get_manager() -> AsyncGenerator[SessionManager]:
         owner = get_runtime()
-        manager = await owner.acquire_manager()
+        manager = owner.acquire_manager()
         try:
             yield manager
         finally:
@@ -105,7 +85,7 @@ def create_app(
             "session_not_found": 404, "session_busy": 409, "session_incomplete": 409,
             "capacity_exceeded": 429, "manager_closed": 503, "run_failed": 502,
             "storage_unavailable": 503, "runtime_not_ready": 503, "manager_busy": 409,
-            "runtime_immutable": 409, "configuration_invalid": 409,
+            "configuration_invalid": 409,
             "invalid_model": 422, "invalid_thinking_level": 422,
             "model_change_failed": 502, "login_preview_failed": 422,
             "login_capacity_exceeded": 429, "login_preview_not_found": 404,

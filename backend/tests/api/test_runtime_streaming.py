@@ -27,11 +27,11 @@ from pydantic import SecretStr
 from omt.agent.agent import Agent
 from omt.ai.model import Model
 from omt.api.app import create_app
-from omt.api.schemas import StreamEvent
+from omt.api.schemas import RuntimeResponse, StreamEvent
 from omt.api.settings import ApiSettings
 from omt.core import bootstrap, model_configuration, settings
 from omt.core.session_manager import SessionError, SessionManager
-from omt.core.store import SessionStore, initialize_session_database
+from omt.core.store import SessionRecord, SessionStore, initialize_session_database
 
 
 MODELS = ["deepseek-flash", "deepseek-v4-pro", "test-plain"]
@@ -113,27 +113,110 @@ def events(body: str) -> list[StreamEvent]:
     return [StreamEvent.model_validate_json(line[6:]) for line in body.splitlines() if line.startswith("data: ")]
 
 
-@asynccontextmanager
-async def manager_context(
-    config: ApiSettings, model: RecordingModel, tools: Sequence[BaseTool] = (),
-) -> AsyncGenerator[SessionManager]:
-    initialize_session_database(config.db_path)
-    async with AsyncSqliteSaver.from_conn_string(str(config.db_path)) as saver:
-        manager = SessionManager(Agent(model, tools=tools, checkpointer=saver), SessionStore(config.db_path),
-                                 workspace_path=config.workspace_path, system_prompt="私有系统提示词",
-                                 skill_roots=[], max_concurrent_runs=config.max_concurrent_runs)
-        try:
-            yield manager
-        finally:
-            await manager.aclose()
+def application(config: ApiSettings, model: RecordingModel, tools: Sequence[BaseTool] = ()) -> FastAPI:
+    """为流式契约注入真实 SessionRuntime，所有配置、历史及工具均由测试创建。"""
+    seed(config)
 
-
-def fixed_application(config: ApiSettings, model: RecordingModel, tools: Sequence[BaseTool] = ()) -> FastAPI:
     @asynccontextmanager
-    async def factory(options: ApiSettings) -> AsyncGenerator[SessionManager]:
-        async with manager_context(options, model, tools) as manager:
-            yield manager
-    return create_app(config, manager_factory=factory)
+    async def factory(options: ApiSettings) -> AsyncGenerator[bootstrap.SessionRuntime]:
+        """持有 Runtime 与 Saver，退出时先关闭当前 Manager 再释放数据库连接。"""
+        async with AsyncSqliteSaver.from_conn_string(str(options.db_path)) as saver:
+            manager = SessionManager(Agent(model, tools=tools, checkpointer=saver), SessionStore(options.db_path),
+                                     workspace_path=options.workspace_path, system_prompt="私有系统提示词",
+                                     skill_roots=[], max_concurrent_runs=options.max_concurrent_runs)
+            selection = settings.load_settings()
+            definition = settings.load_model_store()[selection.defaultProvider].models[0]
+            runtime = bootstrap.SessionRuntime(manager, selection, definition, saver, tools)
+            try:
+                yield runtime
+            finally:
+                await runtime.aclose()
+    return create_app(config, runtime_factory=factory)
+
+
+def test_runtime_factory_supports_switching_and_closes_current_manager(
+    config: ApiSettings, sdk: list[RecordingModel],
+) -> None:
+    """注入的工厂走完整配置路径，切换后退出也必须关闭继任 Manager。"""
+    seed(config)
+    opened: list[bootstrap.SessionRuntime] = []
+    closed: list[bool] = []
+
+    @asynccontextmanager
+    async def factory(options: ApiSettings) -> AsyncGenerator[bootstrap.SessionRuntime]:
+        """记录真实 Runtime 上下文的进入与退出，不替换会话或模型切换实现。"""
+        async with bootstrap.open_session_runtime(options) as runtime:
+            opened.append(runtime)
+            yield runtime
+        closed.append(True)
+
+    app = create_app(config, runtime_factory=factory)
+    assert not opened and not sdk
+    with TestClient(app) as client:
+        state = RuntimeResponse.model_validate(client.get("/api/v1/runtime").json())
+        assert state.configured and state.ready and state.mutable
+        assert state.thinking is not None and state.thinking.model == "deepseek-flash"
+        assert client.get("/api/v1/providers").status_code == 200
+        assert client.get("/api/v1/models").status_code == 200
+        identifier = session(client)
+        old_manager = opened[0].manager
+        response = client.put("/api/v1/runtime/model", json={"provider": "deepseek", "model": "test-plain"})
+        assert response.status_code == 200
+        assert response.json()["thinking"]["model"] == "test-plain"
+        assert opened[0].manager is not old_manager
+        result = client.post(f"/api/v1/sessions/{identifier}/runs", json={"message": "继续"})
+        assert result.status_code == 200 and result.json()["answer"] == "回答:test-plain"
+        assert len(opened) == 1 and not closed
+    assert closed == [True]
+    with pytest.raises(SessionError) as raised:
+        _ = asyncio.run(opened[0].manager.create_session())
+    assert raised.value.code == "manager_closed"
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+def test_request_lease_blocks_switch_before_manager_admission(
+    config: ApiSettings, sdk: list[RecordingModel], monkeypatch: pytest.MonkeyPatch, cancel: bool,
+) -> None:
+    """请求已借用但 Manager 尚未占位时禁止切换，成功或取消后均释放借用。"""
+    from httpx import ASGITransport, AsyncClient
+    seed(config)
+
+    async def execute() -> None:
+        entered, release = asyncio.Event(), asyncio.Event()
+        original = SessionManager.create_session
+
+        async def blocked_create(manager: SessionManager, title: str | None = None) -> SessionRecord:
+            """在进入真实会话登记前等待，暴露仅由请求借用保护的时间窗口。"""
+            entered.set()
+            await release.wait()
+            return await original(manager, title)
+
+        monkeypatch.setattr(SessionManager, "create_session", blocked_create)
+        app = create_app(config)
+        async with app.router.lifespan_context(app):
+            async with AsyncClient(transport=ASGITransport(app), base_url="http://local.test") as client:
+                pending = asyncio.create_task(client.post("/api/v1/sessions", json={}))
+                try:
+                    _ = await asyncio.wait_for(entered.wait(), 5)
+                    state = RuntimeResponse.model_validate((await client.get("/api/v1/runtime")).json())
+                    assert state.busy is True and state.running == 0
+                    rejected = await client.put("/api/v1/runtime/thinking", json={"level": "high"})
+                    assert rejected.status_code == 409 and rejected.json()["error"]["code"] == "manager_busy"
+                    if cancel:
+                        _ = pending.cancel()
+                        with pytest.raises(asyncio.CancelledError):
+                            await pending
+                    else:
+                        release.set()
+                        assert (await asyncio.wait_for(pending, 5)).status_code == 201
+                    assert (await client.get("/api/v1/runtime")).json()["busy"] is False
+                    switched = await client.put("/api/v1/runtime/thinking", json={"level": "high"})
+                    assert switched.status_code == 200 and switched.json()["thinking"]["level"] == "high"
+                    assert len(sdk) == 2
+                finally:
+                    _ = pending.cancel()
+                    _ = await asyncio.gather(pending, return_exceptions=True)
+    asyncio.run(execute())
 
 
 def test_first_configuration_is_preview_then_confirm_and_runs(config: ApiSettings, sdk: list[RecordingModel]) -> None:
@@ -389,13 +472,14 @@ def test_stream_protocol_reasoning_tool_links_and_restart_history(config: ApiSet
         AIMessage(id="final", content=[{"type": "reasoning", "reasoning": "再总结"},
                                        {"type": "text", "text": "最终答案"}]),
     ])
-    with TestClient(fixed_application(config, model, [note])) as client:
+    with TestClient(application(config, model, [note])) as client:
         identifier = session(client)
         response = client.post(f"/api/v1/sessions/{identifier}/runs/stream", json={"message": "执行"})
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/event-stream")
         received = events(response.text)
         assert received[0].type == "run.started" and received[-1].type == "run.completed"
+        assert received[0].data["thinking"] == client.get("/api/v1/runtime").json()["thinking"]
         assert [item.seq for item in received] == list(range(1, len(received) + 1))
         assert len({item.run_id for item in received}) == 1
         assert all(item.session_id == identifier for item in received)
@@ -414,7 +498,7 @@ def test_stream_protocol_reasoning_tool_links_and_restart_history(config: ApiSet
         stream_schema = schema["paths"]["/api/v1/sessions/{session_id}/runs/stream"]["post"]
         assert set(stream_schema["responses"]["200"]["content"]) == {"text/event-stream"}
         assert stream_schema["responses"]["422"]["content"]["application/json"]["schema"]["$ref"].endswith("/HttpErrorResponse")
-    with TestClient(fixed_application(config, RecordingModel(responses=[AIMessage(content="后续")]))) as client:
+    with TestClient(application(config, RecordingModel(responses=[AIMessage(content="后续")]))) as client:
         restored = client.get(f"/api/v1/sessions/{identifier}/messages").json()
         assert restored == history
 
@@ -425,7 +509,7 @@ def test_history_projects_legacy_reasoning_without_duplicating_standard_blocks(c
         AIMessage(content=[{"type": "reasoning", "reasoning": "标准思考"}, {"type": "text", "text": "新回答"}],
                   additional_kwargs={"reasoning_content": "标准思考"}),
     ])
-    with TestClient(fixed_application(config, model)) as client:
+    with TestClient(application(config, model)) as client:
         identifier = session(client)
         for prompt in ("第一轮", "第二轮"):
             assert client.post(f"/api/v1/sessions/{identifier}/runs", json={"message": prompt}).status_code == 200
@@ -441,7 +525,7 @@ def test_stream_rejections_and_sanitized_execution_failure(config: ApiSettings) 
         raise RuntimeError(KEY)
 
     model = RecordingModel(responses=[AIMessage(content="", tool_calls=[{"name": "broken", "id": "bad", "args": {}}])])
-    with TestClient(fixed_application(config, model, [broken])) as client:
+    with TestClient(application(config, model, [broken])) as client:
         assert client.post("/api/v1/sessions/missing/runs/stream", json={"message": "执行"}).status_code == 404
         assert not model.seen
         identifier = session(client)
@@ -470,7 +554,7 @@ def test_handled_tool_error_and_timestamp_warning_still_complete(
         AIMessage(content="", tool_calls=[{"id": "handled-call", "name": "handled", "args": {}}]),
         AIMessage(content="错误已解释"),
     ])
-    with TestClient(fixed_application(config, model, [handled])) as client:
+    with TestClient(application(config, model, [handled])) as client:
         identifier = session(client)
         response = client.post(f"/api/v1/sessions/{identifier}/runs/stream", json={"message": "执行"})
         received = events(response.text)
@@ -482,7 +566,7 @@ def test_handled_tool_error_and_timestamp_warning_still_complete(
 
 def test_stream_storage_failure_before_admission_is_http_error(config: ApiSettings) -> None:
     model = RecordingModel(responses=[AIMessage(content="不应执行")])
-    with TestClient(fixed_application(config, model)) as client:
+    with TestClient(application(config, model)) as client:
         with closing(sqlite3.connect(config.db_path)) as connection:
             _ = connection.execute("DROP TABLE sessions")
             connection.commit()
@@ -594,7 +678,7 @@ def test_buffer_overflow_terminates_and_releases_capacity(config: ApiSettings, l
     update = {"stream_buffer_bytes": 1024} if limit == "bytes" else {"stream_buffer_events": 1}
     limited = config.model_copy(update=update)
     model = RecordingModel(responses=[AIMessage(content="X" * 4000), AIMessage(content="下一会话")])
-    with TestClient(fixed_application(limited, model)) as client:
+    with TestClient(application(limited, model)) as client:
         identifier = session(client)
         response = client.post(f"/api/v1/sessions/{identifier}/runs/stream", json={"message": "大输出"})
         received = events(response.text)

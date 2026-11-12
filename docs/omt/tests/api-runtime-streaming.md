@@ -13,6 +13,8 @@
 
 | 场景 | 输入 / 前置条件 | 预期结果 | 对应测试 |
 | --- | --- | --- | --- |
+| 唯一 Runtime 工厂与关闭 | 配置就绪后通过 runtime_factory 注入真实 SessionRuntime，切换模型并继续已有会话，最后退出 lifespan | 工厂延迟且只进入一次；配置入口和切换可用、mutable=true、thinking 非空；下一轮使用新模型，退出清理继任 Manager | test_runtime_factory_supports_switching_and_closes_current_manager |
+| 请求借用的占位前保护 | 会话创建已取得 Manager，但在真实登记前等待 Event；参数化正常返回与取消 | running=0 时仍 busy=true，切等级返回 409；请求正常结束或取消后释放借用，随后切换成功 | test_request_lease_blocks_switch_before_manager_admission |
 | 首次完整配置 | 无配置无库；查状态/厂商/快捷列表，预览后先选非法模型再确认合法项 | 未确认不创建配置/数据库、不初始化 SDK；无配置时精确枚举 deepseek/ollama 且 logged_in 均 false，新增 requires_api_key 分别 true/false；非法选择 422；确认保存完整目录、初始化缺失库并立即可运行；确认响应、GET runtime 和快捷目录都按 none/low/high/max 返回可选等级；修复旧字母排序，与 CLI 一致；预览不可重复使用；响应不含 Key | test_first_configuration_is_preview_then_confirm_and_runs |
 | Ollama 无 Key 配置、执行与重启 | 参数化 api_key 省略/null/空串/假占位值；真实 build_model，Ollama SDK 和目录替身；确认后 JSON 运行、切另一本地模型、SSE 运行、重建应用 | 服务返回免 Key 能力但不虚报登录；预览不落盘，兼容输入归一为 None；确认就绪，无 auth.json；全部已导入模型可切，临时选择不持久化，重启默认模型和完整四条历史保留，不回显占位 Key | test_ollama_configuration_without_key_runs_switches_and_restarts |
 | 本地服务不可用或没有模型 | 目录替身参数化抛假敏感标记/返回空列表，预览仅提交 provider=ollama | 安全 422 login_preview_failed，提示本地服务和模型，不索取 Key，不泄露标记，不创建配置或数据库 | test_ollama_preview_failure_reports_service_not_key |
@@ -36,7 +38,7 @@
 
 - 模块级 autouse fixture 把 settings.root 和 cwd 指向 tmp_path；清理 OMT_API_* 与模型选择环境变量，前后清空设置缓存。
 - 厂商目录查询和 MCP 发现一律用本地异步替身；大部分用例替换 build_model 返回 RecordingModel；Ollama 免 Key 专项保留真实 build_model/Model/注册表，仅替换其 SDK 工厂返回 RecordingModel，确保缺 auth 不被 bootstrap 替身掩盖。Key 为固定假标记。无真实模型、凭据、网络请求、MCP 进程或 Bash。
-- 实际 SessionRuntime、Agent 图、工具循环、SessionManager、SessionStore 和 AsyncSqliteSaver 不替换。工具只返回本地文本或等待测试 Event。
+- 实际 SessionRuntime、Agent 图、工具循环、SessionManager、SessionStore 和 AsyncSqliteSaver 不替换。JSON/SSE 的本地模型工厂也统一返回 SessionRuntime，不再注入固定 Manager；流中的 run.started 核对真实 thinking 快照。工具只返回本地文本或等待测试 Event。
 - 大部分 HTTP 测试用 TestClient；真正增量/断线用原始 ASGI send/receive 捕获帧，并用同事件循环的 AsyncClient 并发访问真实路由。避免 TestClient/ASGITransport 收集完整响应后才返回导致“伪流式”测试通过。
 - 预览有效期的逻辑边界通过替换 api.runtime 导入的 monotonic 测试，不修改整个 asyncio 的时钟。生产清理还使用事件循环定时器，到期/确认/关闭清除预览并取消计时句柄。
 - 等待均有超时，finally 取消并 gather 测试任务；取消运行在 Saver 关闭前完成。发送超时用本地永不完成的 Event 触发，不靠外部网络卡顿。

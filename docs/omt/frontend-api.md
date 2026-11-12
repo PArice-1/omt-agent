@@ -56,11 +56,11 @@ GET /api/v1/runtime
 | --- | --- |
 | `configured` | 磁盘默认配置是否齐全；不验证远程 Key 有效性或网络可达 |
 | `ready` | 是否有可用运行实例；不保证下一次上游调用成功 |
-| `mutable` | 是否支持配置/切换；注入固定 Manager 时为 false |
+| `mutable` | 是否支持配置/切换；保留字段，统一使用 SessionRuntime 后恒为 true |
 | `changing` | 是否正在确认配置或切换模型/等级 |
 | `busy` | 是否有借用 Manager 的请求、互斥操作或配置切换；只是展示快照 |
 | `running` | Manager 已占位且尚未结束的轮次数 |
-| `thinking` | 当前运行配置；未就绪或固定 Manager 模式为 null |
+| `thinking` | 当前运行配置；尚无运行实例时为 null |
 | `message` | 安全状态提示，不含底层异常原文 |
 
 `thinking.level` 是请求等级；`reasoning_effort` 是当前模型实际映射结果。例如 level=high 而 effort=none，表示保留请求等级但当前模型无法映射。UI 必须提示回退，不能把请求等级当实际能力。
@@ -280,7 +280,7 @@ data: {"version":1,"seq":3,"type":"assistant.reasoning.delta","session_id":"..."
 
 | type | data | 含义 |
 | --- | --- | --- |
-| `run.started` | `{thinking: ThinkingResponse 或 null}` | 正式占位且历史通过校验；实际厂商/模型、请求等级和实际 effort 在 data.thinking 内，不另设 data.model；固定 Manager 模式为 null，不保证上游可达 |
+| `run.started` | `{thinking: ThinkingResponse}` | 正式占位且历史通过校验；实际厂商/模型、请求等级和实际 effort 在 data.thinking 内，不另设 data.model；统一从 SessionRuntime 获取本轮快照，不保证上游可达 |
 | `assistant.started` | `{}` | 一条有可展示内容的助手消息开始 |
 | `assistant.text.delta` | `{delta: string}` | 正文追加片段 |
 | `assistant.reasoning.delta` | `{delta: string}` | 提供商实际返回的 reasoning 片段，不保证所有模型都有 |
