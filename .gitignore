@@ -28,3 +28,6 @@ test-results/
 .pi/
 .vscode/
 .DS_Store
+
+/BACKLOG.md
+/DEVLOG.md
