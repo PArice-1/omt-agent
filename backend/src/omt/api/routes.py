@@ -18,7 +18,8 @@ from .schemas import (
 def session_routes(
     get_manager: Callable[[], AsyncIterator[SessionManager]], get_runtime: Callable[[], ApiRuntime],
 ) -> APIRouter:
-    router = APIRouter(prefix="/api/v1/sessions", dependencies=[])
+    """通过注入的 Manager/Runtime 依赖构建会话路由，由应用挂载业务根前缀。"""
+    router = APIRouter(prefix="/sessions", dependencies=[])
 
     @router.post("", status_code=201)
     async def create_session(body: CreateSessionRequest, manager: Annotated[SessionManager, Depends(get_manager)]) -> SessionResponse:

@@ -3,6 +3,7 @@ import { ApiError } from "./errors";
 import { errorSchema } from "./schemas";
 
 export interface TransportOptions {
+  /** API 根路径（含 /api/omt），默认走同源代理；仅供可信本机接入。 */
   baseUrl?: string;
   fetcher?: typeof fetch;
 }

@@ -115,7 +115,7 @@ def application(options: ApiSettings, model: LocalModel, tools: Sequence[BaseToo
 
 
 def new_session(client: TestClient) -> str:
-    response = client.post("/api/v1/sessions", json={"title": "测试会话"}, headers=HEADERS)
+    response = client.post("/api/omt/sessions", json={"title": "测试会话"}, headers=HEADERS)
     assert response.status_code == 201
     return response.json()["session_id"]
 
@@ -129,20 +129,20 @@ def test_http_sessions_do_not_require_bearer(
     configured = options.model_copy(update={"access_token": SecretStr(token)})
     model = LocalModel(responses=[AIMessage(content="免认证回答")])
     with TestClient(application(configured, model)) as client:
-        response = client.post("/api/v1/sessions", json={}, headers=headers)
+        response = client.post("/api/omt/sessions", json={}, headers=headers)
         assert response.status_code == 201
         session_id = response.json()["session_id"]
-        response = client.get("/api/v1/sessions", headers=headers)
+        response = client.get("/api/omt/sessions", headers=headers)
         assert response.status_code == 200
         assert [item["session_id"] for item in response.json()] == [session_id]
-        response = client.get(f"/api/v1/sessions/{session_id}/messages", headers=headers)
+        response = client.get(f"/api/omt/sessions/{session_id}/messages", headers=headers)
         assert response.status_code == 200 and response.json() == []
         response = client.post(
-            f"/api/v1/sessions/{session_id}/runs", json={"message": "本地请求"}, headers=headers,
+            f"/api/omt/sessions/{session_id}/runs", json={"message": "本地请求"}, headers=headers,
         )
         assert response.status_code == 200
         assert response.json()["answer"] == "免认证回答"
-        history = client.get(f"/api/v1/sessions/{session_id}/messages", headers=headers)
+        history = client.get(f"/api/omt/sessions/{session_id}/messages", headers=headers)
         assert history.status_code == 200
         assert [item["text"] for item in history.json()] == ["本地请求", "免认证回答"]
         assert "WWW-Authenticate" not in response.headers
@@ -156,16 +156,27 @@ def test_http_input_validation_and_health(options: ApiSettings, headers: dict[st
         assert client.get("/health").json() == {"status": "ok"}
         for path in ("/docs", "/redoc", "/openapi.json"):
             assert client.get(path).status_code == 200
+        # OpenAPI 与实际路由都只暴露固定业务前缀，不保留版本路径别名。
+        paths = set(client.get("/openapi.json").json()["paths"])
+        assert paths == {
+            "/health", "/api/omt/runtime", "/api/omt/providers", "/api/omt/models",
+            "/api/omt/model-logins", "/api/omt/model-logins/{login_id}/confirm",
+            "/api/omt/runtime/model", "/api/omt/runtime/thinking", "/api/omt/sessions",
+            "/api/omt/sessions/{session_id}/messages", "/api/omt/sessions/{session_id}/runs",
+            "/api/omt/sessions/{session_id}/runs/stream",
+        }
+        for path in ("/api/v1/runtime", "/api/v2/sessions", "/api/omt/api/v1/sessions"):
+            assert client.get(path).status_code == 404
         for message in ("", " \n", "a\x00b", "x" * 32001, 42):
             response = client.post(
-                "/api/v1/sessions/missing/runs", json={"message": message}, headers=headers,
+                "/api/omt/sessions/missing/runs", json={"message": message}, headers=headers,
             )
             assert response.status_code == 422
             assert response.json()["error"]["code"] == "invalid_request"
             assert "input" not in response.text
-        response = client.post("/api/v1/sessions", json={"workspace_path": "/arbitrary"}, headers=headers)
+        response = client.post("/api/omt/sessions", json={"workspace_path": "/arbitrary"}, headers=headers)
         assert response.status_code == 422
-        assert client.get("/api/v1/sessions", headers=headers).json() == []
+        assert client.get("/api/omt/sessions", headers=headers).json() == []
     assert model.seen_messages == []
 
 
@@ -185,33 +196,33 @@ def test_http_multiturn_restart_empty_session_and_history_projection(
     with TestClient(app) as client:
         session_id = new_session(client)
         empty_id = new_session(client)
-        assert client.get(f"/api/v1/sessions/{session_id}/messages", headers=HEADERS).json() == []
+        assert client.get(f"/api/omt/sessions/{session_id}/messages", headers=HEADERS).json() == []
         with closing(sqlite3.connect(database)) as connection:
             _ = connection.execute("UPDATE sessions SET updated_at = '2000-01-01 00:00:00'")
             connection.commit()
-        response = client.post(f"/api/v1/sessions/{session_id}/runs", json={"message": "  读取\n"}, headers=HEADERS)
+        response = client.post(f"/api/omt/sessions/{session_id}/runs", json={"message": "  读取\n"}, headers=HEADERS)
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "completed" and data["answer"] == "第一轮回答"
         assert data["run_id"] and data["session_id"] == session_id
-        history = client.get(f"/api/v1/sessions/{session_id}/messages", headers=HEADERS)
+        history = client.get(f"/api/omt/sessions/{session_id}/messages", headers=HEADERS)
         assert [item["role"] for item in history.json()] == ["user", "assistant", "tool", "assistant"]
         assert history.json()[0]["text"] == "  读取\n"
         assert history.json()[1]["tool_calls"][0]["id"] == "call-1"
         assert history.json()[2]["tool_call_id"] == "call-1"
         assert "私有系统提示词" not in history.text
         assert "不可展示的 artifact" not in history.text and "模型内部元数据" not in history.text
-        assert client.get("/api/v1/sessions", headers=HEADERS).json()[0]["session_id"] == session_id
+        assert client.get("/api/omt/sessions", headers=HEADERS).json()[0]["session_id"] == session_id
 
     # 新应用、新 Manager、新 Saver 连接，不复用内存会话。
     second_model = LocalModel(responses=[AIMessage(content="第二轮回答"), AIMessage(content="空会话首轮")])
     with TestClient(application(options, second_model, [local_note])) as client:
-        response = client.post(f"/api/v1/sessions/{session_id}/runs", json={"message": "继续"}, headers=HEADERS)
+        response = client.post(f"/api/omt/sessions/{session_id}/runs", json={"message": "继续"}, headers=HEADERS)
         assert response.status_code == 200 and response.json()["answer"] == "第二轮回答"
-        history = client.get(f"/api/v1/sessions/{session_id}/messages", headers=HEADERS).json()
+        history = client.get(f"/api/omt/sessions/{session_id}/messages", headers=HEADERS).json()
         assert len(history) == 6
         assert sum(isinstance(item, SystemMessage) for item in second_model.seen_messages[0]) == 1
-        assert client.post(f"/api/v1/sessions/{empty_id}/runs", json={"message": "首轮"}, headers=HEADERS).status_code == 200
+        assert client.post(f"/api/omt/sessions/{empty_id}/runs", json={"message": "首轮"}, headers=HEADERS).status_code == 200
 
     with closing(sqlite3.connect(database)) as connection:
         row = connection.execute("SELECT updated_at, title FROM sessions WHERE thread_id = ?", (session_id,)).fetchone()
@@ -233,14 +244,14 @@ def test_http_missing_foreign_and_incomplete_sessions(options: ApiSettings, tmp_
     asyncio.run(seed())
     model = LocalModel(responses=[AIMessage(content="未调用")])
     with TestClient(application(options, model)) as client:
-        assert len(client.get("/api/v1/sessions", headers=HEADERS).json()) == 1
+        assert len(client.get("/api/omt/sessions", headers=HEADERS).json()) == 1
         for session_id in ("missing", "foreign"):
             for suffix in ("messages", "runs"):
-                url = f"/api/v1/sessions/{session_id}/{suffix}"
+                url = f"/api/omt/sessions/{session_id}/{suffix}"
                 response = (client.get(url, headers=HEADERS) if suffix == "messages"
                             else client.post(url, json={"message": "hi"}, headers=HEADERS))
                 assert response.status_code == 404
-        response = client.post("/api/v1/sessions/pending/runs", json={"message": "hi"}, headers=HEADERS)
+        response = client.post("/api/omt/sessions/pending/runs", json={"message": "hi"}, headers=HEADERS)
         assert response.status_code == 409 and response.json()["error"]["code"] == "session_incomplete"
     assert model.seen_messages == []
 
@@ -254,7 +265,7 @@ def test_http_errors_are_sanitized_and_failed_run_is_not_retried(options: ApiSet
     model = LocalModel(responses=[AIMessage(content="", tool_calls=[{"name": "broken", "args": {}, "id": "broken-1"}])])
     with TestClient(application(options, model, [broken])) as client:
         session_id = new_session(client)
-        url = f"/api/v1/sessions/{session_id}/runs"
+        url = f"/api/omt/sessions/{session_id}/runs"
         response = client.post(url, json={"message": "执行"}, headers=HEADERS)
         assert response.status_code == 502
         assert response.json()["error"]["code"] == "run_failed"
@@ -265,7 +276,7 @@ def test_http_errors_are_sanitized_and_failed_run_is_not_retried(options: ApiSet
         with closing(sqlite3.connect(options.db_path)) as connection:
             _ = connection.execute("DROP TABLE sessions")
             connection.commit()
-        response = client.get("/api/v1/sessions", headers=HEADERS)
+        response = client.get("/api/omt/sessions", headers=HEADERS)
         assert response.status_code == 503
         assert response.json()["error"]["code"] == "storage_unavailable"
         assert "sessions" not in response.json()["error"]["message"]
@@ -279,11 +290,11 @@ def test_timestamp_failure_returns_completed_with_warning(
     monkeypatch.setattr(SessionStore, "update_session_updated_at", broken_update)
     with TestClient(application(options, LocalModel(responses=[AIMessage(content="已完成")]))) as client:
         session_id = new_session(client)
-        response = client.post(f"/api/v1/sessions/{session_id}/runs", json={"message": "执行"}, headers=HEADERS)
+        response = client.post(f"/api/omt/sessions/{session_id}/runs", json={"message": "执行"}, headers=HEADERS)
         assert response.status_code == 200
         assert response.json()["answer"] == "已完成"
         assert response.json()["warnings"] == ["session_timestamp_update_failed"]
-        assert len(client.get(f"/api/v1/sessions/{session_id}/messages", headers=HEADERS).json()) == 2
+        assert len(client.get(f"/api/omt/sessions/{session_id}/messages", headers=HEADERS).json()) == 2
 
 
 @pytest.mark.parametrize("limit", [1, 2])
@@ -362,8 +373,8 @@ def test_settings_and_unconfigured_startup(
     missing = options.model_copy(update={"db_path": tmp_path / "missing.sqlite"})
     with TestClient(create_app(missing)) as client:
         assert client.get("/health").status_code == 200
-        assert client.get("/api/v1/runtime").json()["ready"] is False
-        assert client.post("/api/v1/sessions", json={}).status_code == 503
+        assert client.get("/api/omt/runtime").json()["ready"] is False
+        assert client.post("/api/omt/sessions", json={}).status_code == 503
     assert not missing.db_path.exists()
     with pytest.raises(ValueError):
         with TestClient(create_app(options.model_copy(update={"workspace_path": tmp_path / "other"}))):
@@ -382,15 +393,15 @@ def test_settings_and_unconfigured_startup(
         "deepseek": {"models": [{"id": "test-model", "baseUrl": "https://example.test"}]},
     }), encoding="utf-8")
     with TestClient(create_app(missing)) as client:
-        assert client.get("/api/v1/runtime").json()["configured"] is True
-        assert client.get("/api/v1/runtime").json()["ready"] is False
+        assert client.get("/api/omt/runtime").json()["configured"] is True
+        assert client.get("/api/omt/runtime").json()["ready"] is False
     assert not missing.db_path.exists()
     with closing(sqlite3.connect(options.db_path)) as connection:
         _ = connection.execute("DROP TABLE sessions")
         connection.commit()
     with TestClient(create_app(options)) as client:
-        assert client.get("/api/v1/runtime").json()["ready"] is False
-        assert client.get("/api/v1/providers").status_code == 200
+        assert client.get("/api/omt/runtime").json()["ready"] is False
+        assert client.get("/api/omt/providers").status_code == 200
 
 
 def test_default_lifespan_builds_dependencies_once_and_cleans_up(
@@ -424,14 +435,14 @@ def test_default_lifespan_builds_dependencies_once_and_cleans_up(
     with TestClient(app) as client:
         session_id = new_session(client)
         for message in ("第一轮", "第二轮"):
-            response = client.post(f"/api/v1/sessions/{session_id}/runs", json={"message": message}, headers=HEADERS)
+            response = client.post(f"/api/omt/sessions/{session_id}/runs", json={"message": message}, headers=HEADERS)
             assert response.status_code == 200
             assert response.json()["answer"] == "本地回答"
         model_factory.assert_called_once()
         discover.assert_awaited_once()
         assert discover.call_args.args[0]["local"]["command"] == "test-not-executed"
     # 离开 lifespan 后 Manager 不再可用，且 SQLite 连接已退出上下文。
-    response = client.get("/api/v1/sessions", headers=HEADERS)
+    response = client.get("/api/omt/sessions", headers=HEADERS)
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "manager_closed"
 
@@ -523,7 +534,7 @@ def test_cli_and_http_share_one_manager_without_leaking_terminal_output(
             try:
                 async with app.router.lifespan_context(app):
                     async with AsyncClient(transport=ASGITransport(app), base_url="http://local.test") as client:
-                        response = await client.post("/api/v1/sessions", json={}, headers=HEADERS)
+                        response = await client.post("/api/omt/sessions", json={}, headers=HEADERS)
                         session_id = response.json()["session_id"]
                         reader = AsyncMock(side_effect=["/resume", "/resume 1", "CLI 问题", "/exit"])
                         monkeypatch.setattr("omt.cli.app.read_input", reader)
@@ -534,11 +545,11 @@ def test_cli_and_http_share_one_manager_without_leaking_terminal_output(
                         )
                         assert capsys.readouterr().out.count("CLI 回答") == 1
                         response = await client.post(
-                            f"/api/v1/sessions/{session_id}/runs", json={"message": "HTTP 问题"}, headers=HEADERS,
+                            f"/api/omt/sessions/{session_id}/runs", json={"message": "HTTP 问题"}, headers=HEADERS,
                         )
                         assert response.status_code == 200 and response.json()["answer"] == "HTTP 回答"
                         assert capsys.readouterr().out == ""
-                        history = await client.get(f"/api/v1/sessions/{session_id}/messages", headers=HEADERS)
+                        history = await client.get(f"/api/omt/sessions/{session_id}/messages", headers=HEADERS)
                         assert [m["text"] for m in history.json()] == ["CLI 问题", "CLI 回答", "HTTP 问题", "HTTP 回答"]
             finally:
                 await runtime.aclose()

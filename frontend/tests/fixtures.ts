@@ -13,9 +13,9 @@ export const runtime: RuntimeResponse = {
   thinking: { provider: "deepseek", model: "deepseek-flash", level: "none", reasoning_effort: "none", available_levels: ["none", "high", "low", "max"] },
   message: "运行环境已就绪",
 };
-export const terminal: TerminalEvent = { version: 1, seq: 4, type: "run.completed", session_id: sessionA.session_id, run_id: "run-1", data: { status: "completed", answer: "分析完成", warnings: [] } };
+export const terminal: TerminalEvent = { seq: 4, type: "run.completed", session_id: sessionA.session_id, run_id: "run-1", data: { status: "completed", answer: "分析完成", warnings: [] } };
 export function runEvents(result: RunResponse = completedRun): RunEvent[] {
-  const common = { version: 1, session_id: result.session_id, run_id: result.run_id } as const;
+  const common = { session_id: result.session_id, run_id: result.run_id } as const;
   return [
     { ...common, seq: 1, type: "run.started", data: { thinking: runtime.thinking } },
     { ...common, seq: 2, type: "assistant.started", message_id: "m1", role: "assistant", data: {} },

@@ -17,9 +17,9 @@ beforeAll(() => {
   HTMLDialogElement.prototype.close = function () { this.open = false; };
 });
 beforeEach(() => server.use(
-  http.get(base + "/api/v1/runtime", () => HttpResponse.json(runtime)),
-  http.get(base + "/api/v1/models", () => HttpResponse.json([])),
-  http.get(base + "/api/v1/providers", () => HttpResponse.json([])),
+  http.get(base + "/runtime", () => HttpResponse.json(runtime)),
+  http.get(base + "/models", () => HttpResponse.json([])),
+  http.get(base + "/providers", () => HttpResponse.json([])),
 ));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
@@ -45,8 +45,8 @@ describe("workspace user flows with the real API client", () => {
     let reads = 0;
     let posts = 0;
     server.use(
-      http.get(base + "/api/v1/sessions", () => { reads += 1; return HttpResponse.json([]); }),
-      http.post(base + "/api/v1/*", () => { posts += 1; return HttpResponse.json({}); }),
+      http.get(base + "/sessions", () => { reads += 1; return HttpResponse.json([]); }),
+      http.post(base + "/*", () => { posts += 1; return HttpResponse.json({}); }),
     );
     const controller = renderWorkspace();
     expect(controller.getSnapshot().connection).toBe("disconnected");
@@ -67,17 +67,17 @@ describe("workspace user flows with the real API client", () => {
     let completed = false;
     let runs = 0;
     server.use(
-      http.get(base + "/api/v1/sessions", ({ request }) => {
+      http.get(base + "/sessions", ({ request }) => {
         expect(request.headers.has("Authorization")).toBe(false);
         return HttpResponse.json(created ? [sessionA] : []);
       }),
-      http.post(base + "/api/v1/sessions", async ({ request }) => {
+      http.post(base + "/sessions", async ({ request }) => {
         expect(await request.json()).toEqual({ title: "项目分析" });
         created = true;
         return HttpResponse.json(sessionA, { status: 201 });
       }),
-      http.get(base + "/api/v1/sessions/session-a/messages", () => HttpResponse.json(completed ? history : [])),
-      http.post(base + "/api/v1/sessions/session-a/runs/stream", async ({ request }) => {
+      http.get(base + "/sessions/session-a/messages", () => HttpResponse.json(completed ? history : [])),
+      http.post(base + "/sessions/session-a/runs/stream", async ({ request }) => {
         expect(await request.json()).toEqual({ message: "分析项目" });
         runs += 1; completed = true;
         return sseResponse();
@@ -107,11 +107,11 @@ describe("workspace user flows with the real API client", () => {
     let completed = false;
     let runs = 0;
     server.use(
-      http.get(base + "/api/v1/sessions", () => HttpResponse.json([sessionA])),
-      http.get(base + "/api/v1/sessions/session-a/messages", () => completed
+      http.get(base + "/sessions", () => HttpResponse.json([sessionA])),
+      http.get(base + "/sessions/session-a/messages", () => completed
         ? HttpResponse.json({ error: { code: "storage_unavailable", message: "存储异常" } }, { status: 503 })
         : HttpResponse.json([])),
-      http.post(base + "/api/v1/sessions/session-a/runs/stream", () => { completed = true; runs += 1; return sseResponse(); }),
+      http.post(base + "/sessions/session-a/runs/stream", () => { completed = true; runs += 1; return sseResponse(); }),
     );
     renderWorkspace();
     await connect(user);
@@ -130,9 +130,9 @@ describe("workspace user flows with the real API client", () => {
     const user = userEvent.setup();
     let runs = 0;
     server.use(
-      http.get(base + "/api/v1/sessions", () => HttpResponse.json([sessionA])),
-      http.get(base + "/api/v1/sessions/session-a/messages", () => HttpResponse.json([])),
-      http.post(base + "/api/v1/sessions/session-a/runs/stream", () => { runs += 1; return HttpResponse.error(); }),
+      http.get(base + "/sessions", () => HttpResponse.json([sessionA])),
+      http.get(base + "/sessions/session-a/messages", () => HttpResponse.json([])),
+      http.post(base + "/sessions/session-a/runs/stream", () => { runs += 1; return HttpResponse.error(); }),
     );
     renderWorkspace();
     await connect(user);
@@ -160,14 +160,14 @@ describe("workspace user flows with the real API client", () => {
     let listReads = 0;
     let runs = 0;
     server.use(
-      http.get(base + "/api/v1/sessions", () => {
+      http.get(base + "/sessions", () => {
         listReads += 1;
         return listReads === 2
           ? HttpResponse.json({ error: { code: "proxy_unavailable", message: "无法取得后端响应；若已发送执行请求，结果可能不明，请勿自动重试。" } }, { status: 502 })
           : HttpResponse.json([sessionA]);
       }),
-      http.get(base + "/api/v1/sessions/session-a/messages", () => HttpResponse.json(completed ? history : [])),
-      http.post(base + "/api/v1/sessions/session-a/runs/stream", () => { completed = true; runs += 1; return sseResponse(); }),
+      http.get(base + "/sessions/session-a/messages", () => HttpResponse.json(completed ? history : [])),
+      http.post(base + "/sessions/session-a/runs/stream", () => { completed = true; runs += 1; return sseResponse(); }),
     );
     renderWorkspace();
     await connect(user);
@@ -193,9 +193,9 @@ describe("workspace user flows with the real API client", () => {
     const user = userEvent.setup();
     let completed = false;
     server.use(
-      http.get(base + "/api/v1/sessions", () => HttpResponse.json([sessionA])),
-      http.get(base + "/api/v1/sessions/session-a/messages", () => HttpResponse.json(completed ? history : [])),
-      http.post(base + "/api/v1/sessions/session-a/runs/stream", () => { completed = true; return sseResponse(); }),
+      http.get(base + "/sessions", () => HttpResponse.json([sessionA])),
+      http.get(base + "/sessions/session-a/messages", () => HttpResponse.json(completed ? history : [])),
+      http.post(base + "/sessions/session-a/runs/stream", () => { completed = true; return sseResponse(); }),
     );
     renderWorkspace();
     await connect(user);
@@ -211,9 +211,9 @@ describe("workspace user flows with the real API client", () => {
     let completed = false;
     let runs = 0;
     server.use(
-      http.get(base + "/api/v1/sessions", () => HttpResponse.json([sessionA])),
-      http.get(base + "/api/v1/sessions/session-a/messages", () => HttpResponse.json(completed ? history : [])),
-      http.post(base + "/api/v1/sessions/session-a/runs/stream", () => {
+      http.get(base + "/sessions", () => HttpResponse.json([sessionA])),
+      http.get(base + "/sessions/session-a/messages", () => HttpResponse.json(completed ? history : [])),
+      http.post(base + "/sessions/session-a/runs/stream", () => {
         completed = true; runs += 1;
         return sseResponse({ ...completedRun, warnings: ["session_timestamp_update_failed"] });
       }),
@@ -237,14 +237,14 @@ describe("workspace user flows with the real API client", () => {
     let confirmations = 0;
     const current = () => configured ? { ...runtime, ready, thinking: ready ? runtime.thinking : null } : { ...runtime, configured: false, ready: false, thinking: null };
     server.use(
-      http.get(base + "/api/v1/runtime", () => HttpResponse.json(current())),
-      http.get(base + "/api/v1/providers", () => HttpResponse.json([{ provider: "deepseek", logged_in: configured }])),
-      http.post(base + "/api/v1/model-logins", async ({ request }) => {
+      http.get(base + "/runtime", () => HttpResponse.json(current())),
+      http.get(base + "/providers", () => HttpResponse.json([{ provider: "deepseek", logged_in: configured }])),
+      http.post(base + "/model-logins", async ({ request }) => {
         expect(await request.json()).toEqual({ provider: "deepseek", api_key: "mock-key-only" });
         previews += 1;
         return HttpResponse.json({ login_id: "preview", provider: "deepseek", models: ["deepseek-flash"], from_cache: false, expires_in: 600 }, { status: 201 });
       }),
-      http.post(base + "/api/v1/model-logins/preview/confirm", async ({ request }) => {
+      http.post(base + "/model-logins/preview/confirm", async ({ request }) => {
         expect(await request.json()).toEqual({ model: "deepseek-flash" });
         confirmations += 1; configured = true;
         return HttpResponse.json({ configuration_saved: true, runtime_ready: ready, runtime: current(), error: ready ? null : { code: "model_change_failed", message: "启用失败" } });
@@ -272,11 +272,11 @@ describe("workspace user flows with the real API client", () => {
     const user = userEvent.setup();
     let writer: ReadableStreamDefaultController<Uint8Array> | undefined;
     let completed = false;
-    const common = { version: 1, session_id: "session-a", run_id: "run-1", role: "tool" } as const;
+    const common = { session_id: "session-a", run_id: "run-1", role: "tool" } as const;
     server.use(
-      http.get(base + "/api/v1/sessions", () => HttpResponse.json([sessionA])),
-      http.get(base + "/api/v1/sessions/session-a/messages", () => HttpResponse.json(completed ? history : [])),
-      http.post(base + "/api/v1/sessions/session-a/runs/stream", () => new HttpResponse(new ReadableStream<Uint8Array>({ start(controller) {
+      http.get(base + "/sessions", () => HttpResponse.json([sessionA])),
+      http.get(base + "/sessions/session-a/messages", () => HttpResponse.json(completed ? history : [])),
+      http.post(base + "/sessions/session-a/runs/stream", () => new HttpResponse(new ReadableStream<Uint8Array>({ start(controller) {
         writer = controller;
         const frames = [
           ...runEvents().slice(0, 2),
@@ -316,8 +316,8 @@ describe("workspace user flows with the real API client", () => {
     const user = userEvent.setup();
     let requests = 0;
     server.use(
-      http.get(base + "/api/v1/providers", () => HttpResponse.json([{ provider: "deepseek", logged_in: false }])),
-      http.post(base + "/api/v1/model-logins", () => { requests += 1; return HttpResponse.json({ error: { code: "login_preview_failed", message: "无法获取模型预览" } }, { status: 422 }); }),
+      http.get(base + "/providers", () => HttpResponse.json([{ provider: "deepseek", logged_in: false }])),
+      http.post(base + "/model-logins", () => { requests += 1; return HttpResponse.json({ error: { code: "login_preview_failed", message: "无法获取模型预览" } }, { status: 422 }); }),
     );
     renderWorkspace();
     await waitFor(() => expect(screen.getByLabelText("请求思考等级")).toHaveValue("none"));
@@ -337,11 +337,11 @@ describe("workspace user flows with the real API client", () => {
     let changes = 0;
     const next = { ...runtime, thinking: { provider: "deepseek", model: "other-model", level: "high", reasoning_effort: "none", available_levels: ["none"] } };
     server.use(
-      http.get(base + "/api/v1/models", () => HttpResponse.json([
+      http.get(base + "/models", () => HttpResponse.json([
         { provider: "deepseek", model: "deepseek-flash", available_levels: ["none", "high"], current: true },
         { provider: "deepseek", model: "other-model", available_levels: ["none"], current: false },
       ])),
-      http.put(base + "/api/v1/runtime/model", async ({ request }) => {
+      http.put(base + "/runtime/model", async ({ request }) => {
         expect(await request.json()).toEqual({ provider: "deepseek", model: "other-model" });
         changes += 1;
         return changes === 1 ? HttpResponse.json({ error: { code: "manager_busy", message: "后端忙碌" } }, { status: 409 }) : HttpResponse.json(next);
@@ -369,9 +369,9 @@ describe("workspace user flows with the real API client", () => {
     const user = userEvent.setup();
     let runs = 0;
     server.use(
-      http.get(base + "/api/v1/sessions", () => HttpResponse.json([sessionA])),
-      http.get(base + "/api/v1/sessions/session-a/messages", () => HttpResponse.json([])),
-      http.post(base + "/api/v1/sessions/session-a/runs/stream", ({ request }) => {
+      http.get(base + "/sessions", () => HttpResponse.json([sessionA])),
+      http.get(base + "/sessions/session-a/messages", () => HttpResponse.json([])),
+      http.post(base + "/sessions/session-a/runs/stream", ({ request }) => {
         runs += 1;
         return new HttpResponse(new ReadableStream<Uint8Array>({ start(controller) {
           request.signal.addEventListener("abort", () => controller.error(new DOMException("stop", "AbortError")), { once: true });
@@ -397,7 +397,7 @@ describe("workspace user flows with the real API client", () => {
   it("shows a failed connection and lets the user retry without entering credentials", async () => {
     const user = userEvent.setup();
     let reads = 0;
-    server.use(http.get(base + "/api/v1/sessions", () => {
+    server.use(http.get(base + "/sessions", () => {
       reads += 1;
       return reads === 1
         ? HttpResponse.json({ error: { code: "manager_closed", message: "服务未就绪" } }, { status: 503 })

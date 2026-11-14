@@ -24,7 +24,7 @@
 | 快速切换和思考控制 | 完成一轮后设 high、换到不支持 high 的模型，继续原会话；再让构建失败 | 请求 high 保留、实际 none；主动 unknown 等级 422；下一轮新模型收到完整历史，仅一条索引；所有 JSON 字节不变；构建失败 502，原运行模型保持 | test_quick_switch_and_thinking_preserve_history_and_configuration |
 | 重启不记住临时选择 | 临时选择 high 和另一模型，关闭后重建应用 | 读取原磁盘默认模型、等级 none，不把进程选择伪装成持久化 | test_restart_uses_saved_defaults_not_temporary_selection |
 | 切换取消与并发保护 | 新 Agent 构建等待 Event，同时请求新会话和另一次切换，再取消构建请求 | 状态 changing=true；两个操作 409；取消后原模型、Manager 和状态保持可用，能完成正常一轮 | test_switch_cancellation_blocks_new_work_and_keeps_old_runtime |
-| reasoning、并行同名工具及历史 | 两次助手消息含标准 reasoning 内容块，调用同名工具两次；重建应用查询 | SSE seq 递增、run/session 一致；OpenAPI 正确声明 SSE 及安全 422 错误结构；正文/reasoning 分开；工具按不同调用 ID 关联；流中助手 ID 与历史一致；成功终态只含最终答案；SQLite 重开后完整历史及 reasoning 保留 | test_stream_protocol_reasoning_tool_links_and_restart_history |
+| reasoning、并行同名工具及历史 | 两次助手消息含标准 reasoning 内容块，调用同名工具两次；重建应用查询 | 原始 SSE 帧不含 version 字段，seq 递增、run/session 一致；OpenAPI 正确声明 SSE 及安全 422 错误结构；正文/reasoning 分开；工具按不同调用 ID 关联；流中助手 ID 与历史一致；成功终态只含最终答案；SQLite 重开后完整历史及 reasoning 保留 | test_stream_protocol_reasoning_tool_links_and_restart_history |
 | 接纳前拒绝与执行失败 | 不存在会话；另一个真实图的工具抛假秘密异常，再次运行失败会话 | 不存在为 HTTP 404 且未调用模型；已接纳执行 HTTP 200 后以 run.failed 结束，不泄露异常、不冒成功终态；重试 409，不发送 started | test_stream_rejections_and_sanitized_execution_failure |
 | 真增量、互斥、容量与断线 | 原始 ASGI send 收到 tool.started 后工具仍在 Event 等待；同时切设置、重入、另一会话运行 | 执行未结束已收到 run.started 和正文；切换/重入 409，满载 429，均不启动第二次执行 | test_live_stream_is_incremental_and_disconnect_cleans_up |
 | 网络失败、通知断线及发送超时 | 同上，参数化 ASGI 2.4 send 抛 OSError、send 永久等待、ASGI 2.0 receive 返回 disconnect，以及正常完成 | 失败/超时/断线进入清理，工具 finally 执行，busy 清零，失败会话不可直接追加；正常流完成后历史可读 | 同上 |

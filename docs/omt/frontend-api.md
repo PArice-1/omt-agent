@@ -4,10 +4,11 @@
 
 本文描述当前实现的本机 HTTP 契约，适用于浏览器 UI、其他客户端及负责生成前端的 AI。启动和环境变量见 [HTTP 使用说明](api.md)，模块职责见[架构说明](architecture.md)。
 
-**前后端对齐入口：**第 5 节定义 OMT v1 流式协议、服务端输出链路、事件顺序和界面更新规则；第 6 节给出 `fetch` 增量读取与 SSE 解析代码。前端消费的是本文的 OMT 协议，不是 OpenAI `choices[].delta`、LangGraph 原始事件或普通 JSON `/runs` 响应。
+**前后端对齐入口：**第 5 节定义 OMT 流式协议、服务端输出链路、事件顺序和界面更新规则；第 6 节给出 `fetch` 增量读取与 SSE 解析代码。前端消费的是本文的 OMT 协议，不是 OpenAI `choices[].delta`、LangGraph 原始事件或普通 JSON `/runs` 响应。
 
 ## 1. 接入约束与调用顺序
 
+- 业务接口统一使用固定前缀 `/api/omt`，路径不包含发布版本，不保留旧版本路径别名；SSE 事件不携带 `version` 字段。
 - 默认地址 `http://127.0.0.1:8000`，所有接口当前免认证；配置 access_token 也不启用校验。只供可信本机使用。
 - 推荐浏览器使用同源代理；后端没有 CORS 允许列表，不要把 CORS 当认证，也不要把开发代理向不可信网络开放。
 - HTTP 不解释 CLI 斜杠命令；模型、思考等级通过独立接口修改。
@@ -17,7 +18,7 @@
 建议流程：
 
 ```text
-GET /api/v1/runtime
+GET /api/omt/runtime
   ├─ 未就绪：厂商 → 配置预览 → 确认模型 → 检查保存与启用结果
   └─ 已就绪：读取快捷模型列表、会话列表
                → 选择会话并读取历史，或创建空会话
@@ -29,7 +30,7 @@ GET /api/v1/runtime
 
 ## 2. 基础信息和临时运行设置
 
-### GET /api/v1/runtime
+### GET /api/omt/runtime
 
 无请求体。200 示例：
 
@@ -67,7 +68,7 @@ GET /api/v1/runtime
 
 `available_levels` 已按展示顺序返回：none 在首位，已支持的 low → medium → high → max 从低到高排列；未声明或映射为 null 的等级不返回。当前已知 DeepSeek 模型为 `none → low → high → max`。其他自定义名称保留在已知等级后并按名称排序，不推断其强度。运行状态、快捷模型列表和流中运行快照使用同一规则，**前端直接保留服务端顺序，不再按字母排序**。本次只调整数组顺序，不改变等级名称、映射含义或配置文件。
 
-### GET /api/v1/providers
+### GET /api/omt/providers
 
 返回注册厂商、认证要求和本地凭据状态：
 
@@ -80,7 +81,7 @@ GET /api/v1/runtime
 
 `requires_api_key` 是新增的布尔字段，前端按 `requires_api_key && !logged_in` 决定首次配置时是否显示并必填 Key。不要仅凭 logged_in=false 要求登录：Ollama 无需认证，logged_in 保持 false，不表示不可使用。免 Key 厂商可直接预览模型，不能要求用户填写占位 Key。不返回 Key；logged_in 仅表示本地存在认证厂商的非空 Key，不代表凭据有效；两字段均不保证服务可达或模型已下载。当前实际注册厂商以返回列表为准。
 
-### GET /api/v1/models
+### GET /api/omt/models
 
 只读本地配置，不联网；返回注册厂商下全部已导入模型（需认证厂商要求已存 Key，Ollama 无需 auth.json），不只是曾经选过的模型：
 
@@ -93,7 +94,7 @@ GET /api/v1/runtime
 
 没有可选项时为 `[]`。UI 可以直接展示和搜索，选择项内部保留 provider + model，不按名称猜厂商。列表按厂商、模型 ID 排序；它不保证远程模型可达或支持工具。
 
-### PUT /api/v1/runtime/model
+### PUT /api/omt/runtime/model
 
 ```json
 {"provider":"deepseek","model":"deepseek-v4-pro"}
@@ -101,7 +102,7 @@ GET /api/v1/runtime
 
 200 返回完整 RuntimeResponse。必须来自本地快捷目录，不接受任意地址或未知模型。切换时重新读取所选模型目录和凭据，保留原请求思考等级；缺映射时实际按 none。
 
-### PUT /api/v1/runtime/thinking
+### PUT /api/omt/runtime/thinking
 
 ```json
 {"level":"high"}
@@ -120,7 +121,7 @@ GET /api/v1/runtime
 
 未配置也能启动并查询上述状态。会话接口在没有运行实例时返回 `503 runtime_not_ready`。
 
-### POST /api/v1/model-logins：预览
+### POST /api/omt/model-logins：预览
 
 首次输入：
 
@@ -160,7 +161,7 @@ Ollama 首次使用也直接省略 Key，不要求任何本地认证文件：
 - 默认最多 8 份预览，查询中的请求也占名额；超限返回 429。
 - Key 不出现在响应中。客户端不写 localStorage、聊天历史、URL、日志或异常追踪，提交后尽快清空输入缓冲。
 
-### POST /api/v1/model-logins/{login_id}/confirm：确认保存并启用
+### POST /api/omt/model-logins/{login_id}/confirm：确认保存并启用
 
 ```json
 {"model":"deepseek-flash"}
@@ -189,10 +190,10 @@ Ollama 首次使用也直接省略 Key，不要求任何本地认证文件：
 
 | 方法与路径 | 请求 | 成功响应 |
 | --- | --- | --- |
-| `POST /api/v1/sessions` | `{}` 或 `{"title":"标题"}` | 201 SessionResponse |
-| `GET /api/v1/sessions` | 无 | 200 SessionResponse[] |
-| `GET /api/v1/sessions/{id}/messages` | 无 | 200 MessageResponse[] |
-| `POST /api/v1/sessions/{id}/runs` | `{"message":"本轮输入"}` | 200 RunResponse，等待本轮结束 |
+| `POST /api/omt/sessions` | `{}` 或 `{"title":"标题"}` | 201 SessionResponse |
+| `GET /api/omt/sessions` | 无 | 200 SessionResponse[] |
+| `GET /api/omt/sessions/{id}/messages` | 无 | 200 MessageResponse[] |
+| `POST /api/omt/sessions/{id}/runs` | `{"message":"本轮输入"}` | 200 RunResponse，等待本轮结束 |
 
 ```ts
 interface SessionResponse {
@@ -233,7 +234,7 @@ interface RunResponse {
 - 普通 JSON 的网络断开仍不保证取消。run_id 只是关联标识，不能据此查询后台任务。
 - 成功后刷新历史与列表；刷新失败不能变成重新执行。`session_timestamp_update_failed` 只是更新时间失败，回答仍成功。
 
-## 5. POST /api/v1/sessions/{id}/runs/stream
+## 5. POST /api/omt/sessions/{id}/runs/stream
 
 请求与非流式相同。200 为 `text/event-stream; charset=utf-8`，响应保持打开；使用 fetch 的 ReadableStream，不用只支持 GET 的原生 EventSource，也不能等 response.json()/text() 才展示。
 
@@ -259,7 +260,7 @@ interface RunResponse {
 
 ```text
 event: assistant.reasoning.delta
-data: {"version":1,"seq":3,"type":"assistant.reasoning.delta","session_id":"...","run_id":"...","message_id":"...","role":"assistant","data":{"delta":"思考片段"}}
+data: {"seq":3,"type":"assistant.reasoning.delta","session_id":"...","run_id":"...","message_id":"...","role":"assistant","data":{"delta":"思考片段"}}
 
 ```
 
@@ -267,7 +268,6 @@ data: {"version":1,"seq":3,"type":"assistant.reasoning.delta","session_id":"..."
 
 | 字段 | 规则 |
 | --- | --- |
-| version | 当前为 1；未知版本不得按旧协议猜测 |
 | seq | 当前流发送序号，递增；错误/溢出时不保证连续，不是补发游标 |
 | type | 与 SSE event 名相同；客户端应允许未来未知类型但不能把它当成功 |
 | session_id / run_id | 本轮关联，所有事件一致 |
@@ -316,7 +316,7 @@ data: {"version":1,"seq":3,"type":"assistant.reasoning.delta","session_id":"..."
 | 11 | assistant.completed | m2 | 不发送 | `{}` |
 | 12 | run.completed | 不发送 | 不发送 | `{"status":"completed","answer":"最终答案","warnings":[]}` |
 
-每帧都还包含相同的 version=1、session_id、run_id；助手/工具帧分别带 role=assistant/tool，运行帧不带 role。不强制每轮都有 reasoning、工具或工具增量；同名工具可以有多个不同调用 ID 并行交错。工具也可以失败后由模型解释并最终 run.completed，因此不能把 tool.failed 或 assistant.completed 当作运行终态。
+每帧都还包含相同的 session_id、run_id；助手/工具帧分别带 role=assistant/tool，运行帧不带 role。不强制每轮都有 reasoning、工具或工具增量；同名工具可以有多个不同调用 ID 并行交错。工具也可以失败后由模型解释并最终 run.completed，因此不能把 tool.failed 或 assistant.completed 当作运行终态。
 
 ### 前端如何更新界面
 
@@ -350,7 +350,6 @@ data: {"version":1,"seq":3,"type":"assistant.reasoning.delta","session_id":"..."
 
 ```ts
 interface RunEvent {
-  version: 1;
   seq: number;
   type: string;
   session_id: string;
@@ -364,17 +363,17 @@ function record(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 function envelope(value: unknown): RunEvent {
-  if (!record(value) || value.version !== 1 || !Number.isInteger(value.seq)
+  if (!record(value) || !Number.isInteger(value.seq)
       || typeof value.seq !== 'number' || typeof value.type !== 'string'
       || typeof value.session_id !== 'string' || typeof value.run_id !== 'string'
       || !record(value.data)
       || (value.message_id !== undefined && typeof value.message_id !== 'string')
       || (value.tool_call_id !== undefined && typeof value.tool_call_id !== 'string')
       || (value.role !== undefined && value.role !== 'assistant' && value.role !== 'tool')) {
-    throw new Error('事件格式或版本不受支持，运行结果未确认');
+    throw new Error('事件格式不受支持，运行结果未确认');
   }
   return {
-    version: 1, seq: value.seq, type: value.type,
+    seq: value.seq, type: value.type,
     session_id: value.session_id, run_id: value.run_id, data: value.data,
     message_id: value.message_id, tool_call_id: value.tool_call_id, role: value.role,
   };
@@ -384,7 +383,7 @@ export async function streamRun(
   onEvent: (event: RunEvent) => void, signal: AbortSignal,
 ): Promise<RunEvent> {
   const response = await fetch(
-    `${baseUrl.replace(/\/+$/, '')}/api/v1/sessions/${encodeURIComponent(sessionId)}/runs/stream`,
+    `${baseUrl.replace(/\/+$/, '')}/api/omt/sessions/${encodeURIComponent(sessionId)}/runs/stream`,
     { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
       body: JSON.stringify({ message }), signal },
   );

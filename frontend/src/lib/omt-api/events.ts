@@ -2,7 +2,7 @@ import { z } from "zod";
 import { thinkingSchema } from "./schemas";
 
 export const eventEnvelopeSchema = z.object({
-  version: z.literal(1), seq: z.number().int().positive(), type: z.string(),
+  seq: z.number().int().positive(), type: z.string(),
   session_id: z.string().min(1), run_id: z.string().min(1),
   message_id: z.string().min(1).optional(), tool_call_id: z.string().min(1).optional(),
   role: z.enum(["assistant", "tool"]).optional(), data: z.record(z.string(), z.unknown()),

@@ -13,6 +13,7 @@
 | 场景 | 输入 / 前置条件 | 预期结果 | 对应测试 |
 | --- | --- | --- | --- |
 | 免认证业务接口 | 未配置或保留旧令牌，分别不带请求头、带旧令牌、错误 Bearer 或 Basic 头；本地假模型完成一轮 | 四个会话接口均正常返回，历史包含本轮问答；配置令牌不自动恢复鉴权 | test_http_sessions_do_not_require_bearer |
+| 固定业务前缀 | 查询 OpenAPI 并访问旧版本及重复前缀路径 | 业务接口只挂载在 `/api/omt`，health 保持 `/health`；旧版本及重复前缀路径返回 404 | test_http_input_validation_and_health |
 | 输入与公开文档 | 空白、NUL、超长、非字符串消息；额外 workspace 字段；访问 health、docs、redoc、openapi.json | 非法输入 422，不产生会话或调用模型，不回显 input；health 及文档端点无需认证且可访问 | test_http_input_validation_and_health |
 | 完整工具回合与跨应用继续 | 假模型调用本地工具，返回 artifact 和元数据；新建应用、Manager 与 Saver 后继续旧 ID | 200 仅返回最终回答；历史包含工具关联但无系统消息/artifact/元数据；两轮不重复上下文；索引标题不变、修改时间刷新；终端无过程打印 | test_http_multiturn_restart_empty_session_and_history_projection |
 | 空会话跨应用首轮 | 只创建索引，不执行；重新打开应用 | 读取历史为空，重启后能开始首轮，不把无检查点误判为未完成历史 | 同上 |

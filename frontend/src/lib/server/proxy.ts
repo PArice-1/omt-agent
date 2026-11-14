@@ -24,27 +24,29 @@ const forward: Forwarder = (url, options) => upstreamFetch(url, {
   ...options, dispatcher, redirect: "manual",
 });
 
-/** Allowlisted reverse proxy; never forward credentials or a user-controlled upstream. */
+/** 将 /api/omt 下的白名单业务路径转发到后端同一路径；health 单独映射到 /health。
+ * path 是 Next.js 解码后的相对路径段；仅允许固定本机上游，不转发浏览器凭据。
+ */
 export async function proxyRequest(
   request: Request,
   path: string[],
   forwarder: Forwarder = forward,
 ): Promise<Response> {
   const isHealth = path.length === 1 && path[0] === "health";
-  const isSessions = path.length === 3 && path.join("/") === "api/v1/sessions";
+  const isSessions = path.length === 1 && path[0] === "sessions";
   const validId = (id: string | undefined) => Boolean(id) && id !== "." && id !== "..";
-  const sessionPrefix = path.slice(0, 3).join("/") === "api/v1/sessions" && validId(path[3]);
-  const isSessionAction = path.length === 5 && sessionPrefix && ["messages", "runs"].includes(path[4]);
-  const isStream = path.length === 6 && sessionPrefix && path[4] === "runs" && path[5] === "stream";
-  const isRuntime = path.length === 3 && path.join("/") === "api/v1/runtime";
-  const isDirectory = path.length === 3 && ["api/v1/providers", "api/v1/models"].includes(path.join("/"));
-  const isSwitch = path.length === 4 && path.slice(0, 3).join("/") === "api/v1/runtime" && ["model", "thinking"].includes(path[3]);
-  const isPreview = path.length === 3 && path.join("/") === "api/v1/model-logins";
-  const isConfirm = path.length === 5 && path.slice(0, 3).join("/") === "api/v1/model-logins" && validId(path[3]) && path[4] === "confirm";
+  const sessionPrefix = path[0] === "sessions" && validId(path[1]);
+  const isSessionAction = path.length === 3 && sessionPrefix && ["messages", "runs"].includes(path[2]);
+  const isStream = path.length === 4 && sessionPrefix && path[2] === "runs" && path[3] === "stream";
+  const isRuntime = path.length === 1 && path[0] === "runtime";
+  const isDirectory = path.length === 1 && ["providers", "models"].includes(path[0]);
+  const isSwitch = path.length === 2 && path[0] === "runtime" && ["model", "thinking"].includes(path[1]);
+  const isPreview = path.length === 1 && path[0] === "model-logins";
+  const isConfirm = path.length === 3 && path[0] === "model-logins" && validId(path[1]) && path[2] === "confirm";
   if (!isHealth && !isSessions && !isSessionAction && !isStream && !isRuntime && !isDirectory && !isSwitch && !isPreview && !isConfirm)
     return jsonError(404, "http_error", "代理不支持此路径。");
 
-  const allowed = isHealth || isRuntime || isDirectory ? ["GET"] : isSessions ? ["GET", "POST"] : isSwitch ? ["PUT"] : isSessionAction && path[4] === "messages" ? ["GET"] : ["POST"];
+  const allowed = isHealth || isRuntime || isDirectory ? ["GET"] : isSessions ? ["GET", "POST"] : isSwitch ? ["PUT"] : isSessionAction && path[2] === "messages" ? ["GET"] : ["POST"];
   if (!allowed.includes(request.method)) return jsonError(405, "http_error", "代理不支持此方法。");
   const requestUrl = new URL(request.url);
   if (requestUrl.search) return jsonError(400, "http_error", "此接口不支持查询参数。");
@@ -73,12 +75,12 @@ export async function proxyRequest(
     headers["Content-Type"] = "application/json";
   }
 
-  const execution = request.method === "POST" && path[4] === "runs";
+  const execution = request.method === "POST" && path[2] === "runs";
   const creating = request.method === "POST" && isSessions;
   const uncertainSuffix = execution ? "执行结果可能不明，请勿重复发送。" : creating ? "会话可能已创建，请先刷新列表确认。" : request.method !== "GET" ? "设置结果未确认，请读取运行状态检查，不要自动重复提交。" : "本次读取失败，可稍后手动刷新。";
   try {
     const target = backendUrl();
-    target.pathname = "/" + path.map(encodeURIComponent).join("/");
+    target.pathname = (isHealth ? "/" : "/api/omt/") + path.map(encodeURIComponent).join("/");
     const response = await forwarder(target, { method: request.method, headers, ...(body === undefined ? {} : { body }),
       ...(isStream ? { signal: request.signal } : {}) });
     if (response.status >= 300 && response.status < 400)

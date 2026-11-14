@@ -5,7 +5,7 @@
 ## 目标与状态
 第一版面向可信本机、单用户，采用 Next.js App Router + TypeScript strict。
 用户确认浅蓝色、简洁美观的界面；当前按无认证契约连接，无令牌输入、保存或登录流程。
-本文件描述已实现的结构与行为，包含运行配置、模型切换及 OMT v1 SSE。接口事实以 [frontend-api.md](../omt/frontend-api.md) 为准；该文件集中维护于 docs/omt，前后端共同引用，同步接口变更时核对实际后端实现。
+本文件描述已实现的结构与行为，包含运行配置、模型切换及 OMT SSE。接口事实以 [frontend-api.md](../omt/frontend-api.md) 为准；该文件集中维护于 docs/omt，前后端共同引用，同步接口变更时核对实际后端实现。
 
 ## 模块导航与依赖
 ```
@@ -15,11 +15,11 @@ app/page → features/workspace/workspace
                     ├→ workspace/model（状态与操作）
                     │     └→ lib/omt-api（契约、校验、请求）
                     └→ 展示组件（props 与回调）
-浏览器 API 客户端 → /api/omt/* → Next.js Node Route Handler → 固定本机后端
+浏览器 API 客户端 → /api/omt/* → Next.js Node Route Handler → 本机后端 /api/omt/*
 ```
 
 - `src/app/`：页面、布局、全局样式和代理路由。页面不承载业务编排。
-- `src/lib/omt-api/`：Zod schema 是响应类型的单一来源；集中导出类型与 OmtClient interface。客户端接受可选 baseUrl/fetch 依赖，不依赖 React，不发送 Authorization。`events.ts` 校验 OMT v1 信封及已知事件 data；`stream.ts` 使用 fetch/ReadableStream 增量解析 SSE，不使用整包 text/json 读取成功流。
+- `src/lib/omt-api/`：Zod schema 是响应类型的单一来源；集中导出类型与 OmtClient interface。客户端接受可选 baseUrl/fetch 依赖，不依赖 React，不发送 Authorization。`events.ts` 校验 OMT 信封及已知事件 data；`stream.ts` 使用 fetch/ReadableStream 增量解析 SSE，不使用整包 text/json 读取成功流。
 - `src/features/workspace/model/`：框架无关的工作台控制器，向调用方提供状态快照、订阅和显式操作；隐藏连接世代、去重、锁、历史替换及错误分类。
 - `src/features/connection/`：无令牌的连接界面，提供显式连接、只读检查与断开操作，并提示仅供可信本机使用。
 - `src/features/runtime/`：独立的 RuntimeController 管理全进程运行状态、厂商/本地模型目录、配置预览/确认及临时切换；与所选会话无关。密码输入仅在弹窗内短暂保存，提交前清空；Key 只经客户端提交给固定本机上游，不进入控制器快照、浏览器存储或日志。保存结果与启用结果分别展示。`runtime-settings.tsx` 只承载从左侧栏进入的厂商配置弹窗；`runtime-controls.tsx` 提供输入框底部的模型/思考强度下拉及状态反馈，通过 props 回调接入控制器，不直接请求后端。
@@ -62,10 +62,11 @@ Composer 使用 controls/settingsFeedback 插槽组合运行设置，不绑定�
 ## 服务端、配置与安全
 - dev/start 默认绑定 127.0.0.1；不适用于公网或多用户部署。
 - `OMT_BACKEND_URL` 为服务端配置，默认 http://127.0.0.1:8000，只允许 http(s) 本机回环地址，无凭据、查询或自定义路径。
+- 客户端 baseUrl 是包含 `/api/omt` 的 API 根路径，默认 `/api/omt`；业务路径不再叠加 API 前缀。代理保持业务路径不变，只有 `/api/omt/health` 映射到后端 `/health`。
 - 代理只允许契约中的 health、runtime、providers、models、model-logins 及会话/历史/运行路径，逐路径限制 GET/POST/PUT。禁止任意目标 URL、重定向及 Cookie 转发。
 - 业务接口及 health 均不要求认证。代理不校验 Bearer，也不转发传入的 Authorization 或 Cookie；禁止用 NEXT_PUBLIC 配置保存秘密。无认证不等于开放跨域，浏览器跨来源请求仍被拒绝。后端与代理仅面向可信本机。
 - Undici 单次请求禁用 headers/body 超时以等待长执行，不使用重试 Agent。仅 SSE 路径传递浏览器 Request.signal，响应以带背压的 ReadableStream 逐块转发，取消下游流同时取消上游 reader，并设置 X-Accel-Buffering: no。非流式兼容路径维持原断连语义，不声称能够取消。
-- SSE 使用流式 TextDecoder 处理跨块 UTF-8，保留半帧、按空行拆帧并处理注释心跳；校验版本、event/type、session/run 关联及严格递增但不要求连续的 seq。未知类型验证信封后忽略，不视为成功；无重连、补发或后台查询。单帧限制 2 MiB、单轮传输限制 16 MiB（含心跳）；超过限制中断接收并提示结果未确认，不静默截断。
+- SSE 事件不携带版本字段，使用流式 TextDecoder 处理跨块 UTF-8，保留半帧、按空行拆帧并处理注释心跳；校验 event/type、session/run 关联及严格递增但不要求连续的 seq。未知类型验证信封后忽略，不视为成功；无重连、补发或后台查询。单帧限制 2 MiB、单轮传输限制 16 MiB（含心跳）；超过限制中断接收并提示结果未确认，不静默截断。
 - Next.js 可能把 Request.url 归一化为内部 localhost origin；浏览器同源校验以原始 Host 和协议为准，并且 Host 本身必须是回环地址。拒绝外部 Host，降低本机 DNS rebinding 风险；不信任 x-forwarded-host 作为公开入口。
 - 浏览器响应与上游请求均禁用缓存；代理错误显式标为结果可能不明，不声称已取消。部署到有请求时限的平台前必须重新设计。
 - Markdown 使用 react-markdown + GFM，跳过原始 HTML，外部图片改为说明文字以避免自动联网；工具输入输出用转义文本/JSON。外链使用安全 rel。
@@ -82,7 +83,7 @@ Composer 使用 controls/settingsFeedback 插槽组合运行设置，不绑定�
 ## 测试策略
 - Vitest：新增接口的路径/方法/请求体与运行时校验；SSE 单字节跨 UTF-8、半帧/多帧、未知事件/心跳、非法信封、递增序号及无终态断线；纯事件投影覆盖多助手、独立 reasoning、同名工具并行、各类工具结果和最终答案核对。控制器覆盖配置保存/启用分离、切换成功/拒绝/失败/回退、停止及会话隔离。
 - React Testing Library + MSW：真实 API 客户端下的连接、创建、发送、历史替换、异常状态与安全渲染；在 Strict Mode 下验证页面初始化仅探测 runtime/目录、会话接入仍显式触发，且获取预览不会自动确认保存。
-- 代理冒烟测试：实际构建的 Next.js + 随机端口本机 HTTP 替身，验证请求来源、编码 ID、配置 GET/POST/PUT、无认证访问、凭据过滤，以及响应在 EOF 前即交付 SSE、下游中止能关闭上游且无 POST 重试。测试进程结束后关闭服务。
+- 代理冒烟测试：核对前后端业务路径均为 `/api/omt/...`，不含版本或重复前缀；实际构建的 Next.js + 随机端口本机 HTTP 替身，验证请求来源、编码 ID、配置 GET/POST/PUT、无认证访问、凭据过滤，以及响应在 EOF 前即交付 SSE、下游中止能关闭上游且无 POST 重试。测试进程结束后关闭服务。
 - Playwright：使用路由 mock 的真实浏览器关键流程与窄屏布局，不连接真实后端。`feedback.spec.ts` 复现执行成功后列表刷新失败、关闭提示和只读检查；`scroll.spec.ts` 覆盖发送时恢复跟随，以及向上阅读后输出、完成、完整历史同步和普通弹窗更新不抢走阅读位置。浏览器可执行性依赖本机 Chromium 系统库；不能以 DOM/mock 测试替代实际浏览器通过声明。
 - lint、tsc、Next build 是交付检查；启动和命令见 [README](../../frontend/README.md)。
 

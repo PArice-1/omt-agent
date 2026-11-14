@@ -2,7 +2,7 @@
 
 本文中的模块级命令在仓库的 `backend/` 目录执行；根目录命令见 [开发说明](../development.md).
 
-HTTP 与 CLI 共用 SessionRuntime、SessionManager 和 SQLite 检查点。HTTP 支持首次模型配置、运行中切换、普通 JSON 运行及 SSE 流式运行。完整字段、OMT v1 事件协议、事件到界面的更新规则与浏览器示例见[前端接入 API 文档](frontend-api.md)；前后端如何实现同一次 HTTP 响应的增量发送与读取，见[流式输出如何实现](frontend-api.md#流式输出如何实现)。
+HTTP 与 CLI 共用 SessionRuntime、SessionManager 和 SQLite 检查点。HTTP 支持首次模型配置、运行中切换、普通 JSON 运行及 SSE 流式运行。完整字段、OMT 事件协议、事件到界面的更新规则与浏览器示例见[前端接入 API 文档](frontend-api.md)；前后端如何实现同一次 HTTP 响应的增量发送与读取，见[流式输出如何实现](frontend-api.md#流式输出如何实现)。
 
 > 仅面向可信本机、单用户、单进程。当前没有启用访问令牌认证；工具拥有当前用户的文件和进程权限，没有沙箱或执行审批。不要向不可信网络开放。
 
@@ -16,7 +16,7 @@ uv run omt-api
 
 默认监听 `127.0.0.1:8000`，一个 worker，无自动重载。工作目录必须与进程实际 cwd 一致；不能通过请求切换目录。不要增加 worker，或同时用 CLI 写同一会话。
 
-- **没有模型配置**：服务仍可启动，`GET /api/v1/runtime` 返回 `configured=false, ready=false`；不初始化模型、MCP 或数据库。配置与公开文档接口可用，会话接口返回 `503 runtime_not_ready`。
+- **没有模型配置**：服务仍可启动，`GET /api/omt/runtime` 返回 `configured=false, ready=false`；不初始化模型、MCP 或数据库。配置与公开文档接口可用，会话接口返回 `503 runtime_not_ready`。
 - **已有完整配置**：启动时尝试打开 Runtime，正常启动仍要求数据库及 sessions 表已存在。初始化失败不关闭配置入口，状态为未就绪；不回显底层异常。
 - **通过 HTTP 确认首次配置**：保存模型配置后显式初始化缺失数据库，再启用 Runtime。已有文件不修复、不迁移；保存和启用分别报告结果。
 - 模型文件仍为 `~/.omt/agent/settings.json`、`auth.json`、`model-store.json`。读取状态、模型列表和预览目录不会修改它们。
@@ -70,18 +70,18 @@ stdio 还支持 env；HTTP 支持 url 和 headers。只使用可信地址和进�
 | 方法与路径 | 用途 |
 | --- | --- |
 | `GET /health` | 200 存活检查，不探测模型/数据库 |
-| `GET /api/v1/runtime` | 配置就绪状态、当前模型和思考等级、忙碌快照 |
-| `GET /api/v1/providers` | 注册厂商、requires_api_key 认证要求及本地凭据状态，不返回 Key |
-| `GET /api/v1/models` | 全部可选的本地已导入模型；仅认证厂商要求已存 Key，Ollama 不需要，不联网 |
-| `POST /api/v1/model-logins` | 201；查询厂商目录并创建内存预览，未确认不落盘 |
-| `POST /api/v1/model-logins/{id}/confirm` | 保存所选模型及完整目录，尝试启用；分别返回保存/运行结果 |
-| `PUT /api/v1/runtime/model` | 从本地快捷列表切换当前进程模型，不保存 |
-| `PUT /api/v1/runtime/thinking` | 修改当前进程思考等级，不保存 |
-| `POST /api/v1/sessions` | 201；显式登记空会话 |
-| `GET /api/v1/sessions` | 当前工作目录的会话列表 |
-| `GET /api/v1/sessions/{id}/messages` | 完整可展示历史，正文与 reasoning 分开 |
-| `POST /api/v1/sessions/{id}/runs` | 原有非流式 JSON 响应，等待最终答案 |
-| `POST /api/v1/sessions/{id}/runs/stream` | POST + SSE，持续返回一轮事件 |
+| `GET /api/omt/runtime` | 配置就绪状态、当前模型和思考等级、忙碌快照 |
+| `GET /api/omt/providers` | 注册厂商、requires_api_key 认证要求及本地凭据状态，不返回 Key |
+| `GET /api/omt/models` | 全部可选的本地已导入模型；仅认证厂商要求已存 Key，Ollama 不需要，不联网 |
+| `POST /api/omt/model-logins` | 201；查询厂商目录并创建内存预览，未确认不落盘 |
+| `POST /api/omt/model-logins/{id}/confirm` | 保存所选模型及完整目录，尝试启用；分别返回保存/运行结果 |
+| `PUT /api/omt/runtime/model` | 从本地快捷列表切换当前进程模型，不保存 |
+| `PUT /api/omt/runtime/thinking` | 修改当前进程思考等级，不保存 |
+| `POST /api/omt/sessions` | 201；显式登记空会话 |
+| `GET /api/omt/sessions` | 当前工作目录的会话列表 |
+| `GET /api/omt/sessions/{id}/messages` | 完整可展示历史，正文与 reasoning 分开 |
+| `POST /api/omt/sessions/{id}/runs` | 原有非流式 JSON 响应，等待最终答案 |
+| `POST /api/omt/sessions/{id}/runs/stream` | POST + SSE，持续返回一轮事件 |
 
 首次配置的预览会显式查询提供商目录；快速列表、切换和模型构建不发送聊天试运行请求。HTTP 不解析 `/login`、`/models`、`/thinking` 等 CLI 命令，消息中的这些文本仍是普通 prompt。
 
@@ -92,14 +92,14 @@ stdio 还支持 env；HTTP 支持 url 和 headers。只使用可信地址和进�
 已有运行环境时：
 
 ```bash
-curl -sS http://127.0.0.1:8000/api/v1/runtime
-curl -sS http://127.0.0.1:8000/api/v1/models
+curl -sS http://127.0.0.1:8000/api/omt/runtime
+curl -sS http://127.0.0.1:8000/api/omt/models
 
-curl -sS http://127.0.0.1:8000/api/v1/sessions \
+curl -sS http://127.0.0.1:8000/api/omt/sessions \
   -H 'Content-Type: application/json' -d '{"title":"分析项目"}'
 
 # 将创建结果保存为 SESSION_ID；提交 prompt 可能执行工具。
-curl -N "http://127.0.0.1:8000/api/v1/sessions/$SESSION_ID/runs/stream" \
+curl -N "http://127.0.0.1:8000/api/omt/sessions/$SESSION_ID/runs/stream" \
   -H 'Content-Type: application/json' \
   -d '{"message":"请分析当前项目结构，暂不修改文件"}'
 ```

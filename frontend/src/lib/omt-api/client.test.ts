@@ -13,7 +13,7 @@ describe("OMT client contract", () => {
     const { client, fetcher } = setup([sessionA]);
     expect(await client.listSessions()).toEqual([sessionA]);
     const [url, options] = fetcher.mock.calls[0];
-    expect(url).toBe("http://localhost/api/omt/api/v1/sessions");
+    expect(url).toBe("http://localhost/api/omt/sessions");
     expect(options?.headers).toBeInstanceOf(Headers);
     const headers = new Headers(options?.headers);
     expect(headers.has("Authorization")).toBe(false);
@@ -46,13 +46,13 @@ describe("OMT client contract", () => {
     expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body))).toEqual({ message: "  分析\n" });
   });
   it.each([
-    { path: "/api/v1/runtime", method: undefined, body: undefined, response: runtime, call: (api: ReturnType<typeof createOmtClient>) => api.getRuntime() },
-    { path: "/api/v1/providers", method: undefined, body: undefined, response: [{ provider: "p", logged_in: true }], call: (api: ReturnType<typeof createOmtClient>) => api.listProviders() },
-    { path: "/api/v1/models", method: undefined, body: undefined, response: [], call: (api: ReturnType<typeof createOmtClient>) => api.listModels() },
-    { path: "/api/v1/runtime/model", method: "PUT", body: { provider: "p", model: "m" }, response: runtime, call: (api: ReturnType<typeof createOmtClient>) => api.changeModel("p", "m") },
-    { path: "/api/v1/runtime/thinking", method: "PUT", body: { level: "high" }, response: runtime, call: (api: ReturnType<typeof createOmtClient>) => api.changeThinking("high") },
-    { path: "/api/v1/model-logins", method: "POST", body: { provider: "p", api_key: "fake-key" }, response: { login_id: "preview", provider: "p", models: ["m"], from_cache: false, expires_in: 600 }, call: (api: ReturnType<typeof createOmtClient>) => api.previewLogin("p", "fake-key") },
-    { path: "/api/v1/model-logins/a%2Fb/confirm", method: "POST", body: { model: "m" }, response: { configuration_saved: true, runtime_ready: true, runtime, error: null }, call: (api: ReturnType<typeof createOmtClient>) => api.confirmLogin("a/b", "m") },
+    { path: "/runtime", method: undefined, body: undefined, response: runtime, call: (api: ReturnType<typeof createOmtClient>) => api.getRuntime() },
+    { path: "/providers", method: undefined, body: undefined, response: [{ provider: "p", logged_in: true }], call: (api: ReturnType<typeof createOmtClient>) => api.listProviders() },
+    { path: "/models", method: undefined, body: undefined, response: [], call: (api: ReturnType<typeof createOmtClient>) => api.listModels() },
+    { path: "/runtime/model", method: "PUT", body: { provider: "p", model: "m" }, response: runtime, call: (api: ReturnType<typeof createOmtClient>) => api.changeModel("p", "m") },
+    { path: "/runtime/thinking", method: "PUT", body: { level: "high" }, response: runtime, call: (api: ReturnType<typeof createOmtClient>) => api.changeThinking("high") },
+    { path: "/model-logins", method: "POST", body: { provider: "p", api_key: "fake-key" }, response: { login_id: "preview", provider: "p", models: ["m"], from_cache: false, expires_in: 600 }, call: (api: ReturnType<typeof createOmtClient>) => api.previewLogin("p", "fake-key") },
+    { path: "/model-logins/a%2Fb/confirm", method: "POST", body: { model: "m" }, response: { configuration_saved: true, runtime_ready: true, runtime, error: null }, call: (api: ReturnType<typeof createOmtClient>) => api.confirmLogin("a/b", "m") },
   ])("uses the documented method, path and payload for $path", async ({ path, method, body, response, call }) => {
     const { client, fetcher } = setup(response);
     await call(client);

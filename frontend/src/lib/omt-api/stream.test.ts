@@ -16,13 +16,14 @@ const encode = (text: string) => new TextEncoder().encode(text);
 const events = runEvents();
 const wire = events.map((event) => frame(event)).join("");
 
-describe("incremental OMT v1 SSE", () => {
+describe("incremental OMT SSE", () => {
   it("handles every byte as a chunk, including half UTF-8 characters and frames", async () => {
     const received: RunEvent[] = [];
     const bytes = encode(wire);
     const result = await readRunStream(response(Array.from(bytes, (byte) => new Uint8Array([byte]))), sid, (event) => received.push(event));
     expect(received).toEqual(events);
     expect(result).toEqual(terminal);
+    expect(received.every((event) => !("version" in event))).toBe(true);
   });
   it("handles several frames in one read, CRLF, comment heartbeats, unknown types and non-contiguous seq", async () => {
     const unknown = { ...terminal, type: "future.event", seq: 3, data: { any: "value" } };
@@ -44,9 +45,9 @@ describe("incremental OMT v1 SSE", () => {
     await expect(reading).resolves.toEqual(terminal);
   });
   it.each([
-    { version: 2 }, { seq: 1 }, { session_id: "other" }, { run_id: "other" },
+    { seq: 0 }, { seq: 1 }, { session_id: "other" }, { run_id: "other" },
     { type: "assistant.text.delta", message_id: "m", role: "assistant", data: { delta: { invalid: true } } },
-  ])("rejects invalid version, sequence, IDs and known event data: %j", async (change) => {
+  ])("rejects invalid sequence, IDs and known event data: %j", async (change) => {
     const text = frame(events[0]) + frame({ ...terminal, ...change });
     await expect(readRunStream(response([encode(text)]), sid, () => undefined)).rejects.toMatchObject({ code: "invalid_response" });
   });
@@ -77,7 +78,7 @@ describe("incremental OMT v1 SSE", () => {
     const aborter = new AbortController();
     await expect(client.streamRun("a/b", "  本轮\n", () => undefined, aborter.signal)).rejects.toMatchObject({ status: 409, code: "session_incomplete", runId: "r" });
     expect(fetcher).toHaveBeenCalledTimes(1);
-    expect(fetcher.mock.calls[0][0]).toBe("/api/omt/api/v1/sessions/a%2Fb/runs/stream");
+    expect(fetcher.mock.calls[0][0]).toBe("/api/omt/sessions/a%2Fb/runs/stream");
     expect(fetcher.mock.calls[0][1]).toMatchObject({ method: "POST", body: JSON.stringify({ message: "  本轮\n" }), signal: aborter.signal });
     const headers = new Headers(fetcher.mock.calls[0][1]?.headers);
     expect(headers.get("Accept")).toBe("text/event-stream");

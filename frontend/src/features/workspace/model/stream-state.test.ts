@@ -4,7 +4,7 @@ import { applyRunEvent } from "./stream-state";
 import type { RunState } from "./types";
 import { runEvents, terminal } from "../../../../tests/fixtures";
 
-const common = { version: 1, session_id: "session-a", run_id: "run-1" } as const;
+const common = { session_id: "session-a", run_id: "run-1" } as const;
 export const interleaved: RunEvent[] = [
   ...runEvents().slice(0, 2),
   { ...common, seq: 3, type: "assistant.reasoning.delta", message_id: "m1", role: "assistant", data: { delta: "独立思考" } },

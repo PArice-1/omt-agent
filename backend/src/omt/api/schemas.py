@@ -200,9 +200,8 @@ class LoginConfirmResponse(BaseModel):
 
 
 class StreamEvent(BaseModel):
-    """版本 1 的网络信封；data 只包含显式投影的 JSON，不序列化原始框架对象。"""
+    """SSE 网络信封；data 只包含显式投影的 JSON，不序列化原始框架对象。"""
 
-    version: Literal[1] = 1
     seq: int
     type: str
     session_id: str

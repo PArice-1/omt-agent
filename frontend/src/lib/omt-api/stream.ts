@@ -95,9 +95,10 @@ export async function readRunStream(response: Response, sessionId: string, onEve
   }
 }
 
+/** 基于 API 根路径提交单轮 SSE 请求，逐帧交付事件且不自动重试。 */
 export function createStreamRun({ baseUrl = "/api/omt", fetcher = fetch }: TransportOptions) {
   return async (sessionId: string, message: string, onEvent: (event: RunEvent) => void, signal: AbortSignal) => {
-    const response = await fetcher(`${baseUrl.replace(/\/+$/, "")}/api/v1/sessions/${encodeURIComponent(sessionId)}/runs/stream`, {
+    const response = await fetcher(`${baseUrl.replace(/\/+$/, "")}/sessions/${encodeURIComponent(sessionId)}/runs/stream`, {
       method: "POST", headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
       body: JSON.stringify({ message }), signal, cache: "no-store",
     });

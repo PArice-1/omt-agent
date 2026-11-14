@@ -76,8 +76,9 @@ def create_app(
     async def health() -> dict[str, str]:
         return {"status": "ok"}
 
-    app.include_router(configuration_routes(get_runtime))
-    app.include_router(session_routes(get_manager, get_runtime))
+    # 业务路径统一挂载到固定命名空间，避免路由与客户端跟随发布版本改名。
+    app.include_router(configuration_routes(get_runtime), prefix="/api/omt")
+    app.include_router(session_routes(get_manager, get_runtime), prefix="/api/omt")
 
     @app.exception_handler(SessionError)
     async def session_error(_request: Request, exc: SessionError) -> JSONResponse:

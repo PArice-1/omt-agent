@@ -58,7 +58,7 @@ uv run python -m omt.cli
 uv run omt-api
 ```
 
-omt 和模块入口均调用 omt.cli.app:main；默认或 --tui 调用 OmtApp.run()，--plain 在最外层调用一次 asyncio.run(run_cli())，不嵌套事件循环。两种界面均先调用 core.model_configuration.check_model_configuration：配置缺失、不完整或无效时仍进入命令循环，提示 /login，不打开 Manager、MCP 或数据库。完成 /login 并补齐默认配置后，通过 core.store.initialize_session_database 显式初始化缺失库，再加载运行环境。已有完整配置的正常启动仍按下述预建库契约校验。CLI 自定义工厂绕过初始检查。HTTP 无配置仍启动配置入口：预览不写文件，确认后保存并初始化缺失库；已有完整配置的正常启动不隐式建库。配置/数据库初始化失败保留 HTTP 配置入口，不回显原始异常。omt-api 指向 omt.api.app:main，默认监听 127.0.0.1:8000，单 worker。当前本机分支的 HTTP 业务无需访问令牌，health 公开且不调用模型；Swagger/OpenAPI 文档也已开放。
+omt 和模块入口均调用 omt.cli.app:main；默认或 --tui 调用 OmtApp.run()，--plain 在最外层调用一次 asyncio.run(run_cli())，不嵌套事件循环。两种界面均先调用 core.model_configuration.check_model_configuration：配置缺失、不完整或无效时仍进入命令循环，提示 /login，不打开 Manager、MCP 或数据库。完成 /login 并补齐默认配置后，通过 core.store.initialize_session_database 显式初始化缺失库，再加载运行环境。已有完整配置的正常启动仍按下述预建库契约校验。CLI 自定义工厂绕过初始检查。HTTP 无配置仍启动配置入口：预览不写文件，确认后保存并初始化缺失库；已有完整配置的正常启动不隐式建库。配置/数据库初始化失败保留 HTTP 配置入口，不回显原始异常。omt-api 指向 omt.api.app:main，默认监听 127.0.0.1:8000，单 worker。当前本机分支的 HTTP 业务统一挂载在固定前缀 `/api/omt` 下，无需访问令牌；SSE 网络信封不携带版本字段。health 保持 `/health`，公开且不调用模型；Swagger/OpenAPI 文档也已开放。
 
 CLI 和 HTTP 默认都通过 `bootstrap.open_session_runtime(options)`，由 SessionRuntime 持有可替换的 Manager。HTTP 外层 ApiRuntime 管理未配置/未就绪状态、限时限量的内存配置预览和请求借用计数；只在显式确认首次配置后调用 initialize_session_database。两者共用配置解析、预建索引校验、提示词、模型与 Agent 组装：
 1. 确认配置工作目录是实际 cwd，且数据库文件和 sessions 表预先存在；不会 chdir、建索引表或迁移。

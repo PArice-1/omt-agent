@@ -200,12 +200,12 @@ uv run omt-api
 
 默认监听 `127.0.0.1:8000`，使用单 worker。API 默认不挂载 MCP，可用 OMT_API_MCP_SERVERS 显式启用；配置与 CLI 独立。同一本地 Qdrant 目录不能由多个插件进程同时持有。当前 HTTP 免 Bearer 认证，仅供可信本机使用；厂商模型认证要求保持不变。
 
-先通过 `GET /api/v1/runtime` 确认 ready=true；未就绪时按 API 文档完成配置。就绪后可以检查服务并创建会话：
+先通过 `GET /api/omt/runtime` 确认 ready=true；未就绪时按 API 文档完成配置。就绪后可以检查服务并创建会话：
 
 ```bash
 curl -sS http://127.0.0.1:8000/health
 
-curl -sS http://127.0.0.1:8000/api/v1/sessions \
+curl -sS http://127.0.0.1:8000/api/omt/sessions \
   -H 'Content-Type: application/json' \
   -d '{"title":"分析项目"}'
 ```
@@ -214,12 +214,12 @@ curl -sS http://127.0.0.1:8000/api/v1/sessions \
 
 ```bash
 SESSION_ID='<上一步返回的 session_id>'
-curl -sS "http://127.0.0.1:8000/api/v1/sessions/$SESSION_ID/runs" \
+curl -sS "http://127.0.0.1:8000/api/omt/sessions/$SESSION_ID/runs" \
   -H 'Content-Type: application/json' \
   -d '{"message":"请分析当前项目结构，暂不修改文件"}'
 ```
 
-原 `/runs` 等待本轮结束后返回最终回答；使用 `curl -N` 请求 `/runs/stream` 可持续接收正文、reasoning 和工具事件。`GET /api/v1/runtime` 查询当前配置，`GET /api/v1/models` 获取本地快捷模型列表；快速切换不保存配置。断开流式连接会尝试取消，不回滚工具副作用。完整请求、事件和错误见 [HTTP 使用说明](../docs/omt/api.md)与[前端接入 API 文档](../docs/omt/frontend-api.md)。`/docs`、`/redoc` 和 `/openapi.json` 已开放；没有后台任务或独立取消接口。
+原 `/runs` 等待本轮结束后返回最终回答；使用 `curl -N` 请求 `/runs/stream` 可持续接收正文、reasoning 和工具事件。`GET /api/omt/runtime` 查询当前配置，`GET /api/omt/models` 获取本地快捷模型列表；快速切换不保存配置。断开流式连接会尝试取消，不回滚工具副作用。完整请求、事件和错误见 [HTTP 使用说明](../docs/omt/api.md)与[前端接入 API 文档](../docs/omt/frontend-api.md)。`/docs`、`/redoc` 和 `/openapi.json` 已开放；没有后台任务或独立取消接口。
 
 ## 配置与扩展
 

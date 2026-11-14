@@ -17,32 +17,32 @@ describe("local allowlisted proxy", () => {
   it("forwards one request to the fixed upstream, not browser cookies", async () => {
     vi.stubEnv("OMT_BACKEND_URL", "http://127.0.0.1:8000");
     const upstream = forward();
-    const response = await proxyRequest(request("api/v1/sessions", "GET", { Cookie: "secret=value" }), ["api", "v1", "sessions"], upstream);
+    const response = await proxyRequest(request("sessions", "GET", { Cookie: "secret=value" }), ["sessions"], upstream);
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(upstream).toHaveBeenCalledTimes(1);
-    expect(String(upstream.mock.calls[0][0])).toBe("http://127.0.0.1:8000/api/v1/sessions");
+    expect(String(upstream.mock.calls[0][0])).toBe("http://127.0.0.1:8000/api/omt/sessions");
     expect(upstream.mock.calls[0][1].headers.Authorization).toBeUndefined();
     expect(upstream.mock.calls[0][1].headers.Cookie).toBeUndefined();
   });
   it("forwards POST body unchanged", async () => {
     const upstream = forward();
-    await proxyRequest(request("api/v1/sessions/s/runs", "POST"), ["api", "v1", "sessions", "s", "runs"], upstream);
+    await proxyRequest(request("sessions/s/runs", "POST"), ["sessions", "s", "runs"], upstream);
     expect(upstream.mock.calls[0][1]).toMatchObject({ method: "POST", body: '{"message":"hello"}' });
   });
   it.each([
     { method: "GET", path: ["health"] },
-    { method: "GET", path: ["api", "v1", "runtime"] },
-    { method: "GET", path: ["api", "v1", "providers"] },
-    { method: "GET", path: ["api", "v1", "models"] },
-    { method: "POST", path: ["api", "v1", "model-logins"] },
-    { method: "POST", path: ["api", "v1", "model-logins", "p", "confirm"] },
-    { method: "PUT", path: ["api", "v1", "runtime", "model"] },
-    { method: "PUT", path: ["api", "v1", "runtime", "thinking"] },
-    { method: "GET", path: ["api", "v1", "sessions"] },
-    { method: "POST", path: ["api", "v1", "sessions"] },
-    { method: "GET", path: ["api", "v1", "sessions", "s", "messages"] },
-    { method: "POST", path: ["api", "v1", "sessions", "s", "runs"] },
+    { method: "GET", path: ["runtime"] },
+    { method: "GET", path: ["providers"] },
+    { method: "GET", path: ["models"] },
+    { method: "POST", path: ["model-logins"] },
+    { method: "POST", path: ["model-logins", "p", "confirm"] },
+    { method: "PUT", path: ["runtime", "model"] },
+    { method: "PUT", path: ["runtime", "thinking"] },
+    { method: "GET", path: ["sessions"] },
+    { method: "POST", path: ["sessions"] },
+    { method: "GET", path: ["sessions", "s", "messages"] },
+    { method: "POST", path: ["sessions", "s", "runs"] },
   ])("accepts $method $path without authentication and strips incoming credentials", async ({ method, path }) => {
     const upstream = forward();
     const unauthenticated = await proxyRequest(request(path.join("/"), method), path, upstream);
@@ -52,6 +52,8 @@ describe("local allowlisted proxy", () => {
     }), path, upstream);
     expect(credentialed.status).toBe(200);
     expect(upstream).toHaveBeenCalledTimes(2);
+    const expectedPath = path[0] === "health" ? "/health" : "/api/omt/" + path.join("/");
+    expect(upstream.mock.calls.map(([url]) => url.pathname)).toEqual([expectedPath, expectedPath]);
     for (const [, options] of upstream.mock.calls) {
       const headers = new Headers(options.headers);
       expect(headers.has("Authorization")).toBe(false);
@@ -62,9 +64,12 @@ describe("local allowlisted proxy", () => {
     expect(() => backendUrl(url)).toThrow();
   });
   it.each([
-    ["api", "v1", "secrets"],
-    ["api", "v1", "sessions", "..", "runs"],
-    ["api", "v1", "sessions", "s", "delete"],
+    ["secrets"],
+    ["api", "v1", "sessions"],
+    ["api", "v2", "runtime"],
+    ["api", "omt", "sessions"],
+    ["sessions", "..", "runs"],
+    ["sessions", "s", "delete"],
     ["http:", "evil.test"],
   ])("rejects paths outside the contract: %j", async (...path) => {
     const upstream = forward();
@@ -73,34 +78,34 @@ describe("local allowlisted proxy", () => {
   });
   it("enforces the method per endpoint", async () => {
     const upstream = forward();
-    const response = await proxyRequest(request("api/v1/sessions/s/messages", "POST"), ["api", "v1", "sessions", "s", "messages"], upstream);
+    const response = await proxyRequest(request("sessions/s/messages", "POST"), ["sessions", "s", "messages"], upstream);
     expect(response.status).toBe(405);
     expect(upstream).not.toHaveBeenCalled();
   });
   it("accepts a same-origin browser Host when Next normalizes its internal URL", async () => {
     const upstream = forward();
-    const incoming = new Request("http://localhost:3000/api/omt/api/v1/sessions", {
+    const incoming = new Request("http://localhost:3000/api/omt/sessions", {
       method: "POST", body: "{}", headers: { Host: "127.0.0.1:3000", Origin: "http://127.0.0.1:3000",
         "Content-Type": "application/json" },
     });
-    expect((await proxyRequest(incoming, ["api", "v1", "sessions"], upstream)).status).toBe(200);
+    expect((await proxyRequest(incoming, ["sessions"], upstream)).status).toBe(200);
     expect(upstream).toHaveBeenCalledTimes(1);
   });
   it("rejects non-loopback Host headers to guard local DNS rebinding", async () => {
     const upstream = forward();
-    const incoming = request("api/v1/sessions", "POST", { Host: "foreign.test:3000", Origin: "http://foreign.test:3000" });
-    expect((await proxyRequest(incoming, ["api", "v1", "sessions"], upstream)).status).toBe(403);
+    const incoming = request("sessions", "POST", { Host: "foreign.test:3000", Origin: "http://foreign.test:3000" });
+    expect((await proxyRequest(incoming, ["sessions"], upstream)).status).toBe(403);
     expect(upstream).not.toHaveBeenCalled();
   });
   it("rejects foreign origins before forwarding any operation", async () => {
     const upstream = forward();
-    const response = await proxyRequest(request("api/v1/sessions", "POST", { Origin: "https://evil.test" }), ["api", "v1", "sessions"], upstream);
+    const response = await proxyRequest(request("sessions", "POST", { Origin: "https://evil.test" }), ["sessions"], upstream);
     expect(response.status).toBe(403);
     expect(upstream).not.toHaveBeenCalled();
   });
   it("rejects query parameters instead of silently inventing pagination", async () => {
     const upstream = forward();
-    const response = await proxyRequest(request("api/v1/sessions?page=2"), ["api", "v1", "sessions"], upstream);
+    const response = await proxyRequest(request("sessions?page=2"), ["sessions"], upstream);
     expect(response.status).toBe(400);
     expect(upstream).not.toHaveBeenCalled();
   });
@@ -111,14 +116,14 @@ describe("local allowlisted proxy", () => {
   });
   it("never retries upstream network failures and marks uncertainty", async () => {
     const upstream = vi.fn<Forwarder>().mockRejectedValue(new TypeError("network"));
-    const response = await proxyRequest(request("api/v1/sessions/s/runs", "POST"), ["api", "v1", "sessions", "s", "runs"], upstream);
+    const response = await proxyRequest(request("sessions/s/runs", "POST"), ["sessions", "s", "runs"], upstream);
     expect(await response.json()).toMatchObject({ error: { code: "proxy_unavailable" } });
     expect(upstream).toHaveBeenCalledTimes(1);
   });
   it.each([
-    { method: "GET", path: ["api", "v1", "sessions"], feedback: "本次读取失败" },
-    { method: "POST", path: ["api", "v1", "sessions"], feedback: "会话可能已创建" },
-    { method: "POST", path: ["api", "v1", "sessions", "s", "runs"], feedback: "执行结果可能不明" },
+    { method: "GET", path: ["sessions"], feedback: "本次读取失败" },
+    { method: "POST", path: ["sessions"], feedback: "会话可能已创建" },
+    { method: "POST", path: ["sessions", "s", "runs"], feedback: "执行结果可能不明" },
   ])("explains the failed operation for $method $path without conflating reads with runs", async ({ method, path, feedback }) => {
     const upstream = vi.fn<Forwarder>().mockRejectedValue(new TypeError("network"));
     const response = await proxyRequest(request(path.join("/"), method), path, upstream);
@@ -133,8 +138,8 @@ describe("local allowlisted proxy", () => {
     const stream = new ReadableStream<Uint8Array>({ start(controller) { writer = controller; }, cancel: cancelled });
     const text = vi.fn();
     const upstream = vi.fn<Forwarder>().mockResolvedValue({ status: 200, headers: new Headers({ "Content-Type": "text/event-stream" }), body: stream, text });
-    const incoming = request("api/v1/sessions/s/runs/stream", "POST");
-    const response = await proxyRequest(incoming, ["api", "v1", "sessions", "s", "runs", "stream"], upstream);
+    const incoming = request("sessions/s/runs/stream", "POST");
+    const response = await proxyRequest(incoming, ["sessions", "s", "runs", "stream"], upstream);
     expect(text).not.toHaveBeenCalled();
     expect(response.headers.get("X-Accel-Buffering")).toBe("no");
     expect(upstream.mock.calls[0][1].signal).toBe(incoming.signal);
@@ -147,14 +152,14 @@ describe("local allowlisted proxy", () => {
   });
   it("leaves pre-admission streaming errors as HTTP JSON", async () => {
     const upstream = forward(409, '{"error":{"code":"session_incomplete","message":"需检查"}}');
-    const response = await proxyRequest(request("api/v1/sessions/s/runs/stream", "POST"), ["api", "v1", "sessions", "s", "runs", "stream"], upstream);
+    const response = await proxyRequest(request("sessions/s/runs/stream", "POST"), ["sessions", "s", "runs", "stream"], upstream);
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({ error: { code: "session_incomplete" } });
     expect(upstream).toHaveBeenCalledTimes(1);
   });
   it("preserves business error status and body", async () => {
     const upstream = forward(409, '{"error":{"code":"session_busy","message":"busy"}}');
-    const response = await proxyRequest(request("api/v1/sessions/s/messages"), ["api", "v1", "sessions", "s", "messages"], upstream);
+    const response = await proxyRequest(request("sessions/s/messages"), ["sessions", "s", "messages"], upstream);
     expect(response.status).toBe(409);
     expect(await response.json()).toEqual({ error: { code: "session_busy", message: "busy" } });
   });

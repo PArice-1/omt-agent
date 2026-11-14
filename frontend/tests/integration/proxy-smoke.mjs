@@ -16,8 +16,8 @@ const backend = createServer(async (req, res) => {
     res.on('close', () => { streamClosed = true; });
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
     res.setHeader('X-Accel-Buffering', 'no');
-    res.write('event: run.started\ndata: {"version":1,"seq":1,"type":"run.started","session_id":"opaque/id","run_id":"smoke-stream","data":{"thinking":null}}\n\n');
-    releaseStream = () => res.end('event: run.completed\ndata: {"version":1,"seq":2,"type":"run.completed","session_id":"opaque/id","run_id":"smoke-stream","data":{"status":"completed","answer":"stub only","warnings":[]}}\n\n');
+    res.write('event: run.started\ndata: {"seq":1,"type":"run.started","session_id":"opaque/id","run_id":"smoke-stream","data":{"thinking":null}}\n\n');
+    releaseStream = () => res.end('event: run.completed\ndata: {"seq":2,"type":"run.completed","session_id":"opaque/id","run_id":"smoke-stream","data":{"status":"completed","answer":"stub only","warnings":[]}}\n\n');
     return;
   }
   if (req.url === '/health') res.end('{"status":"ok"}');
@@ -50,21 +50,21 @@ try {
   }
   assert(ready, logs);
   assert.deepEqual(await (await fetch(origin + '/api/omt/health')).json(), { status: 'ok' });
-  const response = await fetch(origin + '/api/omt/api/v1/sessions/opaque%2Fid/runs', {
+  const response = await fetch(origin + '/api/omt/sessions/opaque%2Fid/runs', {
     method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json', Cookie: 'do-not-forward=secret' },
     body: JSON.stringify({ message: 'local mock only' }),
   });
   assert.equal(response.status, 200, await response.clone().text());
   assert.equal((await response.json()).answer, 'stub only');
-  assert.deepEqual(calls[1], { url: '/api/v1/sessions/opaque%2Fid/runs', method: 'POST', authorization: undefined, cookie: undefined, body: '{"message":"local mock only"}' });
-  assert.equal((await fetch(origin + '/api/omt/api/v1/sessions', { method: 'POST', headers: { Origin: 'https://foreign.invalid', 'Content-Type': 'application/json' }, body: '{}' })).status, 403);
+  assert.deepEqual(calls[1], { url: '/api/omt/sessions/opaque%2Fid/runs', method: 'POST', authorization: undefined, cookie: undefined, body: '{"message":"local mock only"}' });
+  assert.equal((await fetch(origin + '/api/omt/sessions', { method: 'POST', headers: { Origin: 'https://foreign.invalid', 'Content-Type': 'application/json' }, body: '{}' })).status, 403);
   assert.equal(calls.length, 2);
-  assert.equal((await fetch(origin + '/api/omt/api/v1/sessions')).status, 200);
-  assert.equal((await fetch(origin + '/api/omt/api/v1/sessions', {
+  assert.equal((await fetch(origin + '/api/omt/sessions')).status, 200);
+  assert.equal((await fetch(origin + '/api/omt/sessions', {
     method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: '{}',
   })).status, 200);
-  assert.equal((await fetch(origin + '/api/omt/api/v1/sessions/opaque%2Fid/messages')).status, 200);
-  assert.equal((await fetch(origin + '/api/omt/api/v1/sessions', {
+  assert.equal((await fetch(origin + '/api/omt/sessions/opaque%2Fid/messages')).status, 200);
+  assert.equal((await fetch(origin + '/api/omt/sessions', {
     headers: { Authorization: 'Bearer ignored-test-value', Cookie: 'do-not-forward=secret' },
   })).status, 200);
   assert.equal(calls.length, 6);
@@ -73,10 +73,10 @@ try {
     assert.equal(call.cookie, undefined);
   }
   assert.deepEqual(calls.slice(2).map(({ url, method, body }) => ({ url, method, body })), [
-    { url: '/api/v1/sessions', method: 'GET', body: '' },
-    { url: '/api/v1/sessions', method: 'POST', body: '{}' },
-    { url: '/api/v1/sessions/opaque%2Fid/messages', method: 'GET', body: '' },
-    { url: '/api/v1/sessions', method: 'GET', body: '' },
+    { url: '/api/omt/sessions', method: 'GET', body: '' },
+    { url: '/api/omt/sessions', method: 'POST', body: '{}' },
+    { url: '/api/omt/sessions/opaque%2Fid/messages', method: 'GET', body: '' },
+    { url: '/api/omt/sessions', method: 'GET', body: '' },
   ]);
   for (const [method, path, body] of [
     ['GET', 'runtime'], ['GET', 'providers'], ['GET', 'models'],
@@ -85,19 +85,19 @@ try {
     ['PUT', 'runtime/model', { provider: 'mock', model: 'mock-model' }],
     ['PUT', 'runtime/thinking', { level: 'high' }],
   ]) {
-    const result = await fetch(origin + '/api/omt/api/v1/' + path, {
+    const result = await fetch(origin + '/api/omt/' + path, {
       method, headers: { Origin: origin, 'Content-Type': 'application/json', Authorization: 'ignored', Cookie: 'ignored=value' },
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
     assert.equal(result.status, 200);
     await result.text();
     assert.equal(calls.at(-1).method, method);
-    assert.equal(calls.at(-1).url, '/api/v1/' + path);
+    assert.equal(calls.at(-1).url, '/api/omt/' + path);
     assert.equal(calls.at(-1).body, body ? JSON.stringify(body) : '');
     assert.equal(calls.at(-1).authorization, undefined);
     assert.equal(calls.at(-1).cookie, undefined);
   }
-  const streamUrl = origin + '/api/omt/api/v1/sessions/opaque%2Fid/runs/stream';
+  const streamUrl = origin + '/api/omt/sessions/opaque%2Fid/runs/stream';
   const streamOptions = { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json', Accept: 'text/event-stream' }, body: '{"message":"isolated mock only"}' };
   const stream = await fetch(streamUrl, { ...streamOptions, signal: AbortSignal.timeout(10000) });
   assert.equal(stream.status, 200);

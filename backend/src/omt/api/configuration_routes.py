@@ -13,7 +13,8 @@ from .schemas import (
 
 
 def configuration_routes(get_runtime: Callable[[], ApiRuntime]) -> APIRouter:
-    router = APIRouter(prefix="/api/v1")
+    """用运行环境依赖构建配置路由；业务根前缀由应用统一挂载。"""
+    router = APIRouter()
 
     @router.get("/runtime")
     async def status(runtime: Annotated[ApiRuntime, Depends(get_runtime)]) -> RuntimeResponse:
