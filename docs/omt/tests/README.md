@@ -11,6 +11,7 @@
 | [模型初始化](ai-models.md) | [test_ai.py](../../../backend/tests/ai/test_ai.py)、[test_models_manager.py](../../../backend/tests/ai/test_models_manager.py)、[test_deepseek.py](../../../backend/tests/ai/test_deepseek.py)、[test_model_catalog.py](../../../backend/tests/ai/test_model_catalog.py) |
 | [Ollama 本地模型适配](ollama.md) | [test_ollama.py](../../../backend/tests/ai/test_ollama.py) |
 | [Agent 与同步/异步 v3 流](agent.md) | [test_agent.py](../../../backend/tests/test_agent.py)、[test_agent_stream.py](../../../backend/tests/test_agent_stream.py)、[test_agent_async.py](../../../backend/tests/test_agent_async.py) |
+| [工具错误 Middleware](middleware.md) | [test_middleware.py](../../../backend/tests/test_middleware.py) |
 | [Conversation、历史与会话 ID](conversation.md) | [test_conversation.py](../../../backend/tests/core/test_conversation.py)、[test_conversation_history.py](../../../backend/tests/core/test_conversation_history.py) |
 | [推理强度展示、切换与重建](thinking.md) | [test_thinking.py](../../../backend/tests/cli/test_thinking.py) |
 | [模型登录、完整目录与运行中选择](model-login.md) | [test_model_configuration.py](../../../backend/tests/core/test_model_configuration.py)、[test_login.py](../../../backend/tests/cli/test_login.py) |

@@ -17,6 +17,7 @@ from omt.ai.models_manager import models as model_initializers
 from . import settings as settings_module
 from .configuration import SessionSettings
 from .mcp import get_tools
+from .middlewares_manager import load_middlewares
 from .prompts import load_system_prompt
 from .session_manager import SessionError, SessionManager
 from .settings import ModelDefinition, Settings, load_auth, load_model_store
@@ -71,11 +72,15 @@ async def build_agent(
     servers: dict[str, Connection] | None = None,
     extra_tools: Sequence[BaseTool] = (),
 ) -> Agent:
-    """显式组装内置工具和可选 MCP；无 MCP 配置时不发现或启动外部服务。"""
+    """组装内置/额外/MCP 工具及统一 middleware；无 MCP 配置时不启动外部服务。
+
+    每次构建（含模型切换后的重建）都安装新的工具错误保护实例。
+    """
     mcp_tools = await get_tools(servers) if servers else []
     return Agent(
         model=model.model,
         tools=[*load_tools(), *extra_tools, *mcp_tools],
+        middleware=load_middlewares(),
         checkpointer=checkpointer,
     )
 

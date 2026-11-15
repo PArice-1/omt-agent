@@ -44,6 +44,7 @@ core 是与入口无关的共用核心，不限定于编码场景。核心不导
 | [core/settings.py](../../backend/src/omt/core/settings.py) | 模型配置、认证与目录读取及校验 | 会话编排、OAuth |
 | [ai/model.py](../../backend/src/omt/ai/model.py)、[models_manager.py](../../backend/src/omt/ai/models_manager.py)、[ai/models/](../../backend/src/omt/ai/models) | 厂商注册、模型初始化及厂商目录查询协议 | 配置持久化、历史和展示 |
 | [agent/agent.py](../../backend/src/omt/agent/agent.py) | create_agent 与同步/异步调用、v3 流包装 | CLI、拼接历史、手动执行工具 |
+| [middlewares_manager.py](../../backend/src/omt/core/middlewares_manager.py)、[middlewares/](../../backend/src/omt/core/middlewares/) | load_middlewares 统一组装各文件中的策略；ToolErrorMiddleware 复用预置 ToolRetryMiddleware，处理工具参数校验和执行异常 | 权限审批、幂等保证、副作用回滚 |
 | [core/prompts/](../../backend/src/omt/core/prompts)、[skills.py](../../backend/src/omt/core/skills.py) | 包内基础规则、可信目录的 Skill 元数据发现 | 沙箱、自动执行 Skill 脚本 |
 | [tools_manager.py](../../backend/src/omt/core/tools_manager.py)、[tools/](../../backend/src/omt/core/tools) | 静态工具注册、文件和 Bash | 权限审批、事务回滚 |
 
@@ -279,7 +280,14 @@ v3 仍是实验性协议。cli.app.main() 在交互启动前过滤对应的实�
 
 Bash 返回 exit_code、stdout、stderr、timed_out、truncated。非零退出码作为结果交给模型分析，不自动抛 Python 异常；`[工具完成]` 表示调用已返回，不代表命令退出码是 0。输出在完整捕获后分别截断至 20000 字符，不是内存限额，也不是实时日志流。
 
-工具有当前用户的文件和进程权限，可产生不可逆副作用。目录解析、输入校验和超时都不等于沙箱；不向不可信调用方承诺隔离、审批或全面的后台进程管理。
+`bootstrap.build_agent()` 为内置、额外和 MCP 工具统一安装 `core.middlewares_manager.load_middlewares()` 返回的保护策略，运行中切换模型后重建 Agent 也沿用此入口；底层 `Agent` 封装不隐式安装 middleware，仍允许独立调用方自定义列表。每个策略独立放在 `src/omt/core/middlewares/` 文件中，当前 `tool_error.py` 继承预置 `ToolRetryMiddleware`：
+
+- 首次失败后最多重试 3 次（最多执行 4 次），等待基准为 1、2、4 秒，倍数为 2，配置上限 8 秒并启用 ±25% jitter。当前实际等待最高为 5 秒；预置实现先限幅后抖动，若未来调整次数需重新核对上限。
+- 执行前按模型可见的工具字段拒绝顶层未知参数，避免默认 Pydantic schema 静默丢弃额外字段；不修改原 schema。明确开放额外字段或使用组合/动态字段的 JSON schema 保留原有契约，不按简单白名单推断。未知参数及其余 BaseTool 参数 schema 校验失败均不重试，返回包含校验原因及“请重新调用 tool”的参数修正模板；内部 TypeError 等执行异常不因异常类型而被误判为模型参数错误。
+- 其他执行异常重试耗尽后返回“工具错误：异常类型: 原因”的 error 工具消息，让模型继续处理，不直接中断会话；取消和图暂停信号继续传播。
+- 仅复制本次调用的工具错误配置，不修改注册实例；关闭工具自身的 ToolException 消息转换，避免适配器先吞掉异常。工具主动返回的结果（包括错误状态消息或 Bash 非零退出码）不自动按异常重试。测试与限制见 [Middleware 测试](tests/middleware.md)。
+
+工具有当前用户的文件和进程权限，可产生不可逆副作用。重试不能保证幂等或撤销已发生的部分执行，可能重复副作用。目录解析、输入校验和超时都不等于沙箱；不向不可信调用方承诺隔离、审批或全面的后台进程管理。
 
 ### Skills 发现能力与 Conversation 接入
 
