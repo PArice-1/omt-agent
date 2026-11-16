@@ -39,6 +39,8 @@
 | 提供商与目录不匹配 | provider 未注册、目录缺 provider/model、模型 provider 不符 | 明确拒绝，不回退到其他模型 | test_get_model_rejects_unregistered_provider_before_initializing_model、test_get_model_rejects_missing_or_mismatched_catalog |
 | 精确 URL 选择 | 所选模型不是 models 列表第一项，首项没有思考映射 | 只使用所选 ID 的 URL 和思考映射，不要求未选模型支持思考 | test_get_model_uses_url_of_exact_selected_model_not_first_entry |
 | 目录快照匹配 | 显式传入 definition，ID 或 provider 与设置不同 | 初始化前拒绝，SDK 不调用；不能为保持展示快照而绕过模型选择约束 | test_get_model_rejects_mismatched_definition_snapshot |
+| 隔离模型快照 | 显式 definition/credentials，删除配置文件；另给空认证映射和实际 effort 覆盖 | 同一 build_model 使用快照地址、Key 和思考映射，不读写宿主配置；空认证不得回退已有文件；显式 effort 仅影响当前构造 | test_build_model_from_explicit_snapshot_does_not_read_configuration_files、test_explicit_empty_credentials_do_not_fall_back_to_saved_auth |
+| 只读模型预检 | 合法三份临时配置，SDK 工厂为替身 | resolve_model_parameters 返回受 SecretStr 保护的参数，不构造客户端、不发送模型请求 | test_resolve_model_parameters_checks_auth_without_constructing_client |
 | Agent 组装 | Model 包装对象与内置工具，MCP 发现返回空列表的异步替身 | 等待异步 build_agent，传入 client.model，工具集合包含全部静态注册项 | test_get_agent_uses_underlying_chat_model_and_builtin_tools |
 
 需求调整说明：思考配置从“默认 media、缺映射即报错”改为“未配置或无对应能力统一按 none 处理”，因此原缺失映射异常测试改为验证可用模型和不发送思考参数；配置语法、字段类型与认证错误的拒绝断言保留。

@@ -144,7 +144,7 @@ Python 接口兼容性：ProviderConnection/ModelLogin 不再接受 base_url；l
 
 思考能力不作为初始化的必备条件：未配置等级、等级为 `null`/`"none"`、模型的 `thinkingLevelMap` 缺失或为 `null`、等级不存在或对应值为 `null` 时，统一使用 `reasoning_effort="none"`，不报缺失映射错误。只有显式选择且存在有效映射的等级才使用映射值；显式 `"none"` 不会被目录重新映射为开启思考。
 
-满足条件后，将 provider、模型 ID、HttpUrl、SecretStr 和映射后的 `reasoning_effort` 通过 `Model` 的 `**kwargs` 传给提供商。`build_model(settings, definition=...)` 可显式复用已解析目录快照，并校验其 ID/provider，保证 SessionRuntime 的展示与初始化使用同一映射。参数统一拼写为 `reasoning_effort`。当前入口没有缺失凭据时的环境变量回退，也没有 OAuth 或令牌刷新适配。
+上述只读校验与参数解析由 `bootstrap.resolve_model_parameters` 提供，不构造客户端或发送模型请求；`build_model` 再将 provider、模型 ID、HttpUrl、SecretStr 和映射后的 `reasoning_effort` 通过 `Model` 的 `**kwargs` 传给提供商。`build_model(settings, definition=...)` 可显式复用已解析目录快照，并校验其 ID/provider，保证 SessionRuntime 的展示与初始化使用同一映射。隔离运行可显式提供 `credentials`（按厂商的 AuthCredential 映射）和 definition；提供快照后不读取对应本机文件，空认证映射也不得回退读取 auth.json。可选 `reasoning_effort` 仅覆盖本次实际强度，None 沿用内部等级映射；这些参数不写回用户配置。参数统一拼写为 `reasoning_effort`。CLI/API 入口没有缺失凭据时的环境变量回退，也没有 OAuth 或令牌刷新适配。
 
 配置示例（只展示相关字段，目录中仍需设置可信的 `baseUrl`）：
 

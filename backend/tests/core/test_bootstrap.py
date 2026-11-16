@@ -11,8 +11,8 @@ from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from pydantic import HttpUrl, SecretStr
 
 from omt.agent.agent import Agent
-from omt.core.bootstrap import build_agent as _get_agent, build_model as _get_model
-from omt.core.settings import ModelDefinition, Settings, load_settings
+from omt.core.bootstrap import build_agent as _get_agent, build_model as _get_model, resolve_model_parameters
+from omt.core.settings import AuthCredential, ModelDefinition, Settings, load_settings
 
 
 @pytest.fixture
@@ -199,6 +199,50 @@ def test_get_model_rejects_unregistered_provider_before_initializing_model(confi
     with pytest.raises(ValueError, match="提供商.*未注册"):
         _get_model(settings)
 
+    model_factory.assert_not_called()
+
+
+@pytest.mark.parametrize("override, expected", [(None, "max"), ("none", "none"), ("low", "low")])
+def test_build_model_from_explicit_snapshot_does_not_read_configuration_files(
+    config_dir: Path, model_factory: Mock, override: str | None, expected: str,
+) -> None:
+    """隔离运行复用内部工厂和等级映射；删除配置后仍只使用所选快照，不触碰用户文件。"""
+    settings = Settings(defaultProvider="deepseek", defaultModel="deepseek-chat", defaultThinkingLevel="high")
+    definition = ModelDefinition(id="deepseek-chat", baseUrl=HttpUrl("https://snapshot.example.test/v1"),
+                                 thinkingLevelMap={"high": "max"})
+    for path in config_dir.glob("*.json"):
+        path.unlink()
+    client = _get_model(
+        settings, definition=definition,
+        credentials={"deepseek": AuthCredential(type="api_key", key=SecretStr("snapshot-test-key"))},
+        reasoning_effort=override,
+    )
+    assert isinstance(client.model, FakeListChatModel)
+    options = model_factory.call_args.kwargs
+    assert options["base_url"] == "https://snapshot.example.test/v1"
+    assert options["api_key"] == SecretStr("snapshot-test-key")
+    if expected == "none":
+        assert "reasoning_effort" not in options
+    else:
+        assert options["reasoning_effort"] == expected
+    assert not list(config_dir.glob("*.json"))
+
+
+def test_explicit_empty_credentials_do_not_fall_back_to_saved_auth(config_dir: Path, model_factory: Mock) -> None:
+    """显式空认证是隔离边界，不能因为宿主有登录态就回退读取。"""
+    assert (config_dir / "auth.json").is_file()
+    with pytest.raises(ValueError, match="认证"):
+        _ = _get_model(load_settings(), credentials={})
+    model_factory.assert_not_called()
+
+
+def test_resolve_model_parameters_checks_auth_without_constructing_client(config_dir: Path, model_factory: Mock) -> None:
+    """宿主预检只解析所选模型参数，不能构造客户端或发出探测请求。"""
+    assert (config_dir / "auth.json").is_file()
+    parameters = resolve_model_parameters(load_settings())
+    assert parameters["model"] == "deepseek-chat"
+    assert parameters["api_key"] == SecretStr("test-only-key")
+    assert "test-only-key" not in repr(parameters)
     model_factory.assert_not_called()
 
 
