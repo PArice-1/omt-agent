@@ -12,16 +12,16 @@
 
 | 场景 | 输入 / 前置条件 | 预期结果 | 对应测试 |
 | --- | --- | --- | --- |
-| 显示与成功切换 | 未配置初始等级；先执行一轮，再输入首尾空白/大小写混合的 /THINKING high，目录 high→max，随后继续第二轮 | 初始实际值 none，切换后 max；按 none/low/high 顺序列出，不列 null 能力；修复先前字母排序把 high 放在 low 前的问题；第二轮使用另一假模型，收到完整且不重复的上一轮历史；索引仍只有一条；原 settings.json 和成功缓存不变 | test_cli_switch_rebuilds_and_preserves_history |
-| 从有效等级切到 none | 初始 high→max 并执行一轮，随后 /thinking none 再继续 | 再次初始化 SDK，既不发送 reasoning_effort 也不保留旧 extra_body.thinking；新模型实际执行下一轮 | test_switch_to_none_does_not_keep_previous_thinking_options |
-| 只执行命令 | /thinking、参数过多、/thinking none 或 media/unsupported，最后退出 | 命令不进入模型、不登记会话；参数错误提示用法；不存在/null 映射按 none 并明确提示；同一请求等级不重复初始化 | test_thinking_commands_do_not_create_sessions_and_use_none |
+| 显示与成功切换 | SDK 替身声明 low/high；完成一轮后 /THINKING high，再继续第二轮 | 显示 none/low/high，统一底座收到 high；下一轮使用新模型并继承无重复历史，settings 字节和缓存不变 | test_cli_switch_rebuilds_and_preserves_history |
+| 从有效等级切到 none | 初始 SDK 支持的 high，执行一轮再 /thinking none | 再次构造并传统一 effort=none，不保留旧开启选项；协议是否发送关闭值由 SDK 能力决定 | test_switch_to_none_does_not_keep_previous_thinking_options |
+| 只执行命令 | /thinking、参数过多、none 和 SDK 未声明等级 | 命令不调用模型/创建会话；未知等级回退 none 并提示，相同等级不重复构造 | test_thinking_commands_do_not_create_sessions_and_use_none |
 | 重建失败 | SDK 初始化或 Agent 组装的第二次调用抛含测试敏感标记的异常 | 保留旧 Manager 与显示状态；后续普通消息仍由旧模型回答；提示失败但不显示 SDK 异常原文 | test_switch_failure_keeps_old_manager_and_status |
 | 失败会话保护 | 先完成一轮，再模拟流创建失败，使磁盘仍保留完整终态，但 Manager 已记录失败；随后切换 | 新旧 Manager 身份不同、旧实例拒绝操作；新实例对该 ID 的历史读取/恢复/继续执行仍拒绝；不能靠重建绕过内存保护；退出后新实例也拒绝操作 | test_runtime_rebuild_preserves_failed_session_guard_and_closes_managers |
 | MCP 工具复用 | 假 MCP 发现返回本地 marker 工具，切换后新模型调用它 | 工具真实执行一次并完成回合；发现只在启动执行，不为每次切换重新连接服务器 | test_switch_reuses_mcp_tools_without_rediscovery |
 | 活跃运行保护 | 本地模型等待 Event 时申请切换，之后释放 Event 再切换 | 交接立即报 manager_busy，原运行没有被取消，显示仍为旧值；空闲后能再次成功切换并继续同一会话 | test_switch_does_not_cancel_active_run_and_can_retry_afterwards |
 | 取消切换与并行切换 | Agent 组装等待 Event；另一次切换请求到来，再取消第一次切换任务 | 第二次立即拒绝；CancelledError 传播，原 Manager 与显示值保留且仍可执行，再次切换能成功；上下文退出后切换被拒绝，任务 finally 清理 | test_cancelled_switch_keeps_old_manager_and_can_close |
 | 固定 Manager 兼容 | 嵌入方注入只提供 Manager 的工厂，没有模型配置文件 | /thinking 被消费并提示不支持，不读取配置、不调用模型、不创建索引；既有 manager_factory seam 保留 | test_fixed_manager_reports_unsupported_without_reading_config |
-| 没有思考能力 | 目录 thinkingLevelMap 为 null 或空对象 | 启动和查询均只列出 none，不因缺失能力失败；查询不重新初始化模型 | test_startup_without_thinking_capability_shows_only_none |
+| SDK 未知与不支持 | SDK 替身分别返回未知与明确不支持；磁盘保留 null/空旧字段 | 均只列应用 none，不因旧字段失败；只查询不重建 | test_startup_without_thinking_capability_shows_only_none |
 | 禁止换检查点 | 给 Manager.rebuild 传入使用另一临时 SQLite Saver 的 Agent | 报错且旧 Manager 仍可用，不切换到不同历史来源 | test_manager_rebuild_rejects_different_checkpointer |
 
 本组通过公开 run_cli、SessionRuntime 与 Manager Interface 验证行为。失败保护用例在 Conversation.arun 入口模拟尚未推进图的失败，特意保留完整磁盘检查点；否则只检查不完整检查点，无法发现丢失 `_tainted` 的回归。
@@ -43,7 +43,7 @@ basedpyright --pythonpath .venv/bin/python src/omt/core/bootstrap.py src/omt/cor
 ## 覆盖限制
 
 - 不证明服务端接受某个 effort 或实际输出质量，不请求真实模型/MCP，也不测试真实终端外观。
-- 本组旧/测试模型的 none 保留省略参数语义，不证明关闭服务端推理。已知 DeepSeek Flash/V4 Pro 的显式 none/disabled 和登录能力修复由[模型登录测试](model-login.md)及[模型适配测试](ai-models.md)验证；终端不再统一宣称 none 必定省略参数。
+- 本组验证统一底座收到 none，不再断言旧厂商 SDK 的省略参数语义。具体协议由 LiteLLM 转换，真实桥接的离线协议见[模型测试](ai-models.md)，不证明任意服务都能关闭默认推理。
 - 本组 /thinking 切换仅属于当前 CLI 进程，不持久化、不改变 HTTP 进程，也不是每个 session 的独立配置。
-- /thinking 使用当前运行模型的目录快照，不自动重读外部编辑；/login 的持久化、显式切模型及新模型映射回归见[模型登录测试](model-login.md)，不受本组“不持久化”约束。
+- /thinking 的连接定义沿用运行快照，等级由 SDK 本地能力解析；登录保存和切模型回归见[模型登录测试](model-login.md)。不为更新能力访问网络或改写配置。
 - 重建的互斥检查保护运行/历史/激活操作，不是跨进程锁；应用入口仍须顺序管理生命周期，不能把旧 Manager 引用继续分发给其他调用者。

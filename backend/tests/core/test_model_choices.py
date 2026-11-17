@@ -1,6 +1,7 @@
 """共用快捷模型目录：只读、本地、过滤无凭据/未注册项。"""
 
 import json
+from collections.abc import Callable
 
 import pytest
 from pydantic import SecretStr
@@ -8,37 +9,40 @@ from pydantic import SecretStr
 from omt.core import model_configuration, settings
 
 
-def test_configured_choices_are_read_only_and_include_the_full_catalog() -> None:
+@pytest.mark.parametrize("provider", ["deepseek", "openai", "gemini"])
+def test_configured_choices_use_sdk_levels_without_catalog_writes(
+    provider: str, sdk_reasoning: Callable[..., None],
+) -> None:
+    """缺少 provider 的旧条目也能从所属厂商解析能力，且不写入目录快照。"""
     assert model_configuration.list_configured_models() == []
-    assert not (settings.root / "agent").exists()
-    model_configuration.save_model_login(
-        model_configuration.ModelLogin(provider="deepseek", api_key=SecretStr("test-only-key"), model_name="deepseek-flash"),
-        model_names=["unknown", "deepseek-v4-pro", "deepseek-flash"],
+    sdk_reasoning(provider, "test-reasoner", ("low", "high", "max"))
+    _ = model_configuration.save_model_login(
+        model_configuration.ModelLogin(provider=provider, api_key=SecretStr("test-only-key"), model_name="test-reasoner"),
+        model_names=["unknown", "test-reasoner"],
     )
     directory = settings.root / "agent"
-    before = {path: path.read_bytes() for path in directory.iterdir()}
+    path = directory / "model-store.json"
+    payload = json.loads(path.read_text())
+    payload[provider]["models"][0].pop("provider")
+    _ = path.write_text(json.dumps(payload))
+    before = {file: file.read_bytes() for file in directory.iterdir()}
     choices = model_configuration.list_configured_models()
-    assert [(item.provider, item.model) for item in choices] == [
-        ("deepseek", "deepseek-flash"), ("deepseek", "deepseek-v4-pro"), ("deepseek", "unknown"),
-    ]
+    assert [(item.provider, item.model) for item in choices] == [(provider, "test-reasoner"), (provider, "unknown")]
     assert choices[0].available_levels == ("none", "low", "high", "max")
-    assert choices[-1].available_levels == ("none",)
-    assert before == {path: path.read_bytes() for path in directory.iterdir()}
+    assert choices[1].available_levels == ("none",)
+    assert before == {file: file.read_bytes() for file in directory.iterdir()}
 
 
-@pytest.mark.parametrize(("mapping", "expected"), [
-    (None, ("none",)),
-    ({}, ("none",)),
-    ({"max": "max", "high": "high", "low": "low"}, ("none", "low", "high", "max")),
-    ({"none": None, "high": None, "low": "max"}, ("none", "low")),
-    ({"z-custom": "low", "medium": "high", "high": "low", "a-custom": "max",
-      "low": "high", "max": "max", "unsupported": None},
-     ("none", "low", "medium", "high", "max", "a-custom", "z-custom")),
-    ({"z-custom": "low", "a-custom": "max"}, ("none", "a-custom", "z-custom")),
+@pytest.mark.parametrize("efforts,expected", [
+    (None, ("none",)), ((), ("none",)),
+    (("max", "high", "low"), ("none", "low", "high", "max")),
+    (("minimal", "medium", "high", "xhigh"), ("none", "minimal", "medium", "high", "xhigh")),
+    (("not-an-sdk-level", "high"), ("none", "high")),
 ])
-def test_thinking_levels_use_strength_order_and_preserve_custom_levels(
-    mapping: dict[str, str | None] | None, expected: tuple[str, ...],
+def test_sdk_levels_define_order_and_ignore_legacy_mapping(
+    efforts: tuple[str, ...] | None, expected: tuple[str, ...], sdk_reasoning: Callable[..., None],
 ) -> None:
+    sdk_reasoning("deepseek", "local", efforts)
     directory = settings.root / "agent"
     directory.mkdir(parents=True)
     _ = (directory / "auth.json").write_text(json.dumps({
@@ -46,7 +50,7 @@ def test_thinking_levels_use_strength_order_and_preserve_custom_levels(
     }), encoding="utf-8")
     _ = (directory / "model-store.json").write_text(json.dumps({
         "deepseek": {"models": [{
-            "id": "local", "baseUrl": "https://example.test", "thinkingLevelMap": mapping,
+            "id": "local", "baseUrl": "https://example.test", "thinkingLevelMap": {"z-custom": "max", "low": "high"},
         }]},
     }), encoding="utf-8")
     before = {path: path.read_bytes() for path in directory.iterdir()}

@@ -85,18 +85,18 @@ MCP 命令、环境和 headers 属于可信管理员配置，不应包含仓库�
 
 无模型时仍能输入 `/login`、退出和 EOF；普通请求、/resume、/thinking 只提示先登录，不运行模型或登记会话。已加载模型时同样可 `/login` 添加模型。
 
-1. 展示注册厂商 deepseek/ollama；需认证厂商显示“已登录/未登录”，Ollama 显示“无需 API Key”。按编号或完整名称选择厂商。
+1. 展示注册表开放的厂商（当前十个，以运行列表为准）；需认证厂商显示“已登录/未登录”，Ollama 显示“无需 API Key”。按编号或完整名称选择。
 2. 仅需认证且未登录时输入隐藏的 `api_key`，已有认证直接复用。Ollama 选择后直接查询已下载模型，不需要账号、Key 或占位值。同一认证厂商只需登录一次；选另一个模型无需再次输入 Key。当前仅支持 API Key；Key 不进入输入历史，取消时也清空密码缓冲并恢复显示状态。
-3. 自动经过 core → 注册表 → `ai/models/<厂商>.py` 拉取完整列表，不再询问地址或是否查询。DeepSeek 地址由模块内的 `DEEPSEEK_BASE_URL` 定义，默认 `https://api.deepseek.com`；查询追加 `/models`，十秒超时、最多 1 MiB、不跟随重定向。已有认证时刷新失败可使用本地目录并显示提示；首次拉取失败则不保存，需检查网络或 Key 后重试。Ollama 默认请求 http://localhost:11434/api/tags；请先启动服务并下载模型，失败提示检查本地服务和模型，TUI 可点击“获取模型列表”重试而无需 Key；已导入目录也可离线回退。
+3. 自动经过 core → 注册表 → LiteLLM 查询列表，不询问地址或是否查询。地址来自注册表，目录 HTTP、缓存与回退由 SDK 承担，不再使用 OMT 的厂商 HTTP 适配。**SDK 可返回内置/静态目录，不保证所有厂商实时联网，也不以目录非空证明 Key 有效或本地模型已下载。** SDK 返回空/失败时，已有认证和目录仍可按原规则使用 OMT 本地缓存；首次失败不保存。TUI 可重试获取，Ollama 无需 Key；使用前仍须自行启动服务并下载模型。
 4. 按编号或提供商精确 ID 选择模型。选定后自动保存，不再二次确认；不接受列表之外的手填 ID。普通消息校验器在登录期间暂停，退出后恢复。模型选择完成前 EOF 不落盘，Ctrl-C/外部取消向上传播。
 
-CLI 不直接读写 JSON。core 创建缺失目录并合并相关配置：Ollama 不创建或修改 auth.json，只保存目录和默认选择；旧占位 Key 不再使用，但原认证文件不自动删除或重写。认证厂商的 auth 按厂商共用一个 Key，已登录时不改凭据；model-store 导入该厂商返回的全部 ID，而非只保存选择的一个。同 ID 使用厂商模块定义的地址并保留思考映射/额外元数据，其他厂商及未返回的旧条目保留；已知模型缺失/null 的思考映射由厂商模块补齐，自定义映射（含空表）不覆盖；settings 更新默认厂商和模型，保留已有思考等级。已有非 API 认证和损坏配置不自动覆盖；“已登录”只表示本地保存了非空 Key，不保证它仍有效，没有自动令牌刷新。
+CLI 不直接读写 JSON。选模型确认后，core 保存该次全部返回 ID、所选默认值及必要凭据；取消不保存。Ollama 不写 auth.json，也不使用旧占位 Key。目录使用厂商默认地址，保留未返回旧模型、额外元数据及其他厂商；删除本次厂商条目的旧 thinkingLevelMap，不再写入能力表。损坏连接配置或不兼容认证仍拒绝覆盖；保存非空 Key 不证明远程有效。
 
-首次完成配置后，CLI 立即初始化运行环境，可继续发消息。运行中选择模型会调用 `SessionRuntime.set_model` 重新读取所选定义和认证，再重建 Model/Agent/Manager；保留当前会话、历史、列表编号、MCP 和检查点，不重放消息，也不解除失败保护。沿用当前请求思考等级，新模型缺映射时实际按 none。构建失败仍使用旧运行模型，但默认选择已经保存，CLI 会明确提示这一区别。
+首次完成配置后，CLI 初始化运行环境即可对话。运行中选择模型通过 SessionRuntime.set_model 重建模型/Agent/Manager，保留会话、历史、MCP、检查点与失败保护。请求等级沿用；SDK 未声明该等级则回退 none。构建失败保留旧运行模型，但已保存默认选择会明确提示。
 
 每份变更 JSON 用权限为 0600 的临时文件原子替换（POSIX），但三份配置和数据库之间没有跨文件事务或跨进程锁。I/O 失败可能已保存部分文件，修复后重新 `/login`，不要并行登录。
 
-DeepSeek 模块为已确认的 deepseek-flash/deepseek-v4-pro 提供 low/high/max 映射；旧配置只需重新启动并再次 /login 选择该模型即可补齐，不需要删除认证或重输 Key。/models 只返回 ID，不是完整能力目录；未知 ID 不猜测思考能力，不保证所有远程 ID 支持工具调用，也不发送聊天请求探测能力。DeepSeek 协议参考 [模型列表接口](https://api-docs.deepseek.com/api/list-models/)。
+注册表不再维护厂商等级表。可选等级只来自 LiteLLM 本地能力数据，目录刷新不会补齐 SDK 尚未知的能力；不猜测低中高档位，也不为验证能力发起试运行聊天。手动配置可信模型 ID 仍可调用，不要求 SDK 内置目录已收录。
 
 ### 命令与会话
 
@@ -114,22 +114,22 @@ DeepSeek 模块为已确认的 deepseek-flash/deepseek-v4-pro 提供 low/high/ma
 
 ### 推理强度切换
 
-默认启动会展示推理状态；可选等级来自所选模型的 `thinkingLevelMap`，排除 null 值，始终包含 `none` 并放在首位；已知等级按 low → medium → high → max 排列（仅展示已声明项），自定义名称在后按名称排序。当前 DeepSeek 模型显示 none → low → high → max，与 HTTP 一致。未配置等级、目录缺少对应能力或值为 null 都按 none 处理，并显示实际结果，不再假定默认 media。例如目录 high→max 时：
+默认展示请求等级、解析后的 reasoning_effort 和可选等级。等级来自 SDK，none 作为应用回退项始终在首；其余保留 SDK 顺序，包含 minimal/xhigh 等。未知能力不阻止聊天，也不补造等级；旧 thinkingLevelMap 不生效。例如 SDK 声明支持 gpt-5.1 的 high 时：
 
 ```text
 You> /thinking high
 推理强度已生效，后续请求使用当前配置（仅当前进程，不写回 settings.json）。
-模型：deepseek / your-model-id
+模型：openai / gpt-5.1
 推理等级：high
-实际 reasoning_effort：max
-可选等级：none、high、max
+实际 reasoning_effort：high
+可选等级：none、low、medium、high
 ```
 
 切换先初始化新的 Model 和 Agent，再由空闲 Manager 创建继任 Manager，成功后关闭旧实例。使用同一 SQLite Checkpointer/Store，保留当前会话 ID、历史、列表编号、工作目录、提示词/Skills、工具与失败保护，不重放历史、不创建新会话。MCP 工具只在启动发现一次，切换时复用。
 
 构建失败保留旧模型和旧显示值，提示失败但不打印 SDK/认证错误原文。活跃运行/历史操作时不取消请求来强制切换；CLI 正常顺序输入，不会在一轮执行中处理新命令。相同请求等级不会重复初始化。
 
-此修改只影响当前 CLI 的所有后续轮次（包括之后恢复的其他会话），不写回 `settings.json`、不修改成功配置缓存、不影响独立 HTTP 进程。`/thinking` 使用当前运行模型的目录快照，不自动读取外部编辑；`/login` 选择模型时才显式重读所选定义。`none` 的请求行为由厂商适配决定：当前已知的 DeepSeek Flash/V4 Pro 会显式下发 none/disabled 关闭推理；旧/未知 ID 仍省略参数，不保证关闭服务端默认思考。
+此修改只影响当前进程后续轮次，不写 settings.json、不影响 HTTP 进程。连接定义使用当前快照，/login 选择时显式重读；能力通过 SDK 本地解析统一展示。none 不保证关闭服务端推理：仅 SDK 明确声明 none 才发送关闭值，否则省略参数、采用服务默认。
 
 嵌入方的 `run_cli(manager_factory=...)` 仍可提供固定 SessionManager；自定义工厂绕过启动配置检查，此时不额外读取模型配置（显式 `/login` 除外），`/thinking` 仅提示未提供可切换的配置，`/login` 只保存并提示当前入口无法切换。提供 SessionRuntime 的工厂则支持完整功能。
 

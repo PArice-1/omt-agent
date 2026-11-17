@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from importlib import import_module
 from pathlib import Path
 from typing import Self, override
@@ -24,7 +24,6 @@ from pydantic import Field, HttpUrl, SecretStr
 from omt.agent.agent import Agent
 from omt.ai import models_manager
 from omt.ai.model import Model
-from omt.ai.models.deepseek import DEEPSEEK_BASE_URL
 from omt.cli.app import run_cli
 from omt.cli.login import login
 from omt.cli.settings import CliSettings
@@ -63,7 +62,9 @@ def seed_login() -> None:
 
 
 @pytest.fixture(autouse=True)
-def catalog(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
+def catalog(monkeypatch: pytest.MonkeyPatch, sdk_reasoning: Callable[..., None]) -> AsyncMock:
+    for model in ("deepseek-flash", "deepseek-v4-pro"):
+        sdk_reasoning("deepseek", model, ("low", "high", "max"))
     for key in ("defaultProvider", "defaultModel", "defaultThinkingLevel"):
         monkeypatch.delenv(key, raising=False)
     discover = AsyncMock(return_value=["flash", "pro"])
@@ -75,7 +76,7 @@ def catalog(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
 def sdk(monkeypatch: pytest.MonkeyPatch) -> Mock:
     model = RecordingModel(responses=[AIMessage(content="第一轮回答"), AIMessage(content="第二轮回答")])
     factory = Mock(return_value=model)
-    monkeypatch.setattr(import_module("omt.ai.models.deepseek"), "init_chat_model", factory)
+    monkeypatch.setattr(import_module("omt.ai.litellm_backend"), "initialize_litellm_model", factory)
     return factory
 
 
@@ -94,7 +95,7 @@ def test_ollama_login_skips_key_and_can_chat_after_restart(
 ) -> None:
     catalog.return_value = ["qwen3:8b"]
     factory = Mock(return_value=RecordingModel(responses=[AIMessage(content="本地回答")]))
-    monkeypatch.setattr(import_module("omt.ai.models.ollama"), "init_chat_model", factory)
+    monkeypatch.setattr(import_module("omt.ai.litellm_backend"), "initialize_litellm_model", factory)
     terminal = terminal_for(["/login", "ollama", "qwen3:8b", "你好", "/exit"])
     asyncio.run(run_cli(terminal=terminal))
     assert settings.load_settings().defaultProvider == "ollama"
@@ -118,13 +119,14 @@ def test_first_login_only_asks_provider_key_and_model_and_saves_full_catalog(
     assert settings.load_settings().defaultModel == "flash"
     assert sdk.call_count == 1
     assert sdk.call_args.kwargs["model"] == "flash"
-    assert sdk.call_args.kwargs["base_url"] == str(DEEPSEEK_BASE_URL)
+    assert sdk.call_args.kwargs["base_url"] == models_manager.models["deepseek"].base_url
     assert sdk.call_args.kwargs["api_key"] == SecretStr("fake-private-key")
     assert [entry.id for entry in settings.load_model_store()["deepseek"].models] == ["flash", "pro"]
     records = asyncio.run(SessionStore(CliSettings().db_path).list_sessions(tmp_path))
     assert len(records) == 1 and records[0].title == "正常问题"
     output = capsys.readouterr().out
-    assert "1. deepseek（未登录）" in output and "第一轮回答" in output
+    assert f"{models_manager.supported_providers().index('deepseek') + 1}. deepseek（未登录）" in output
+    assert "第一轮回答" in output
     assert "fake-private-key" not in output
     prompts = [call.args[0] for call in terminal.prompt_async.call_args_list]
     assert not any("base_url" in prompt or "确认" in prompt or "y/N" in prompt for prompt in prompts)
@@ -140,7 +142,7 @@ def test_flash_login_imports_levels_and_applies_each_effort(
                              model_names=("deepseek-flash",))
         path = settings.root / "agent" / "model-store.json"
         _ = path.write_text(json.dumps({"deepseek": {"models": [{
-            "id": "deepseek-flash", "baseUrl": str(DEEPSEEK_BASE_URL),
+            "id": "deepseek-flash", "baseUrl": str(models_manager.models["deepseek"].base_url),
         }]}}))
         initialize_session_database(CliSettings().db_path)
         inputs = ["/login", "deepseek", "deepseek-flash"]
@@ -151,9 +153,11 @@ def test_flash_login_imports_levels_and_applies_each_effort(
     calls = sdk.call_args_list
     # 已有运行环境会在 /login 后再初始化一次；末四次对应实际切换的四种 effort。
     assert [call.kwargs["reasoning_effort"] for call in calls[-4:]] == ["low", "high", "max", "none"]
-    assert calls[-1].kwargs["extra_body"] == {"thinking": {"type": "disabled"}}
+    # CLI 只提供统一 effort；禁用思考的线协议由 LiteLLM 的离线协议测试验证。
+    assert "extra_body" not in calls[-1].kwargs
     models = settings.load_model_store()["deepseek"].models
-    assert all(model.thinkingLevelMap == {"low": "low", "high": "high", "max": "max"} for model in models)
+    assert all(model.available_thinking_levels == ("none", "low", "high", "max") for model in models)
+    assert "thinkingLevelMap" not in (settings.root / "agent" / "model-store.json").read_text()
     output = capsys.readouterr().out
     assert "可选等级：none、low、high、max" in output
     assert "none 的请求行为由厂商适配决定" in output
@@ -167,7 +171,7 @@ def test_logged_in_provider_only_asks_model_and_keeps_credentials_unchanged(caps
     seed_login()
     auth = settings.root / "agent" / "auth.json"
     before = auth.read_bytes()
-    terminal = terminal_for(["1", "2"])
+    terminal = terminal_for([str(models_manager.supported_providers().index("deepseek") + 1), "2"])
     result = asyncio.run(login(terminal))
     assert result is not None and result.model_name == "pro"
     assert terminal.prompt_async.await_count == 2
@@ -278,14 +282,15 @@ def test_real_terminal_key_history_and_validator_are_restored(cancel: bool) -> N
 
 
 @pytest.mark.usefixtures("cli_db")
-def test_model_switch_uses_new_thinking_map_and_keeps_failed_session_guard(
-    sdk: Mock, monkeypatch: pytest.MonkeyPatch,
+def test_model_switch_uses_sdk_capabilities_and_keeps_failed_session_guard(
+    sdk: Mock, monkeypatch: pytest.MonkeyPatch, sdk_reasoning: Callable[..., None],
 ) -> None:
+    sdk_reasoning("deepseek", "pro", ("high",))
     seed_login()
     path = settings.root / "agent" / "model-store.json"
     _ = path.write_text(json.dumps({"deepseek": {"models": [
-        {"id": "flash", "baseUrl": str(DEEPSEEK_BASE_URL)},
-        {"id": "pro", "baseUrl": str(DEEPSEEK_BASE_URL), "thinkingLevelMap": {"high": "max"}},
+        {"id": "flash", "baseUrl": str(models_manager.models["deepseek"].base_url)},
+        {"id": "pro", "baseUrl": str(models_manager.models["deepseek"].base_url), "thinkingLevelMap": {"high": "max"}},
     ]}}))
 
     async def fail(_self: Conversation, _message: str) -> str:
@@ -309,8 +314,8 @@ def test_model_switch_uses_new_thinking_map_and_keeps_failed_session_guard(
                 _ = await previous.list_sessions()
             assert closed.value.code == "manager_closed"
             await runtime.set_thinking_level("high")
-            assert runtime.thinking.reasoning_effort == "max"
-        assert sdk.call_args.kwargs["reasoning_effort"] == "max"
+            assert runtime.thinking.reasoning_effort == "high"
+        assert sdk.call_args.kwargs["reasoning_effort"] == "high"
     asyncio.run(execute())
 
 

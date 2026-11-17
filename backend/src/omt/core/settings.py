@@ -17,6 +17,8 @@ from pydantic import (
 )
 from pydantic_settings import BaseSettings
 
+from omt.ai.litellm_backend import get_model_capabilities
+
 root = Path("~/.omt").expanduser().resolve()
 NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
@@ -28,7 +30,7 @@ class Settings(BaseSettings):
     defaultModel: NonEmptyString = Field(description="默认模型标识，与模型目录中的 id 一致")
     defaultThinkingLevel: NonEmptyString | None = Field(
         default=None,
-        description="可选思考等级；未配置或为 null 时按 none 处理，显式等级按模型 thinkingLevelMap 映射",
+        description="可选思考等级；未配置时按 none 回退，其他等级必须由 LiteLLM 声明支持",
     )
 
 
@@ -42,27 +44,19 @@ class AuthCredential(BaseModel):
 
 
 class ModelDefinition(BaseModel):
-    """模型连接与思考映射；其他能力、价格等额外元数据暂不使用。"""
+    """模型连接定义；旧 thinkingLevelMap 及其他元数据不再参与能力解析。"""
 
     id: NonEmptyString
     baseUrl: HttpUrl
     provider: NonEmptyString | None = None
-    # 等级名映射到提供商的 reasoning_effort；映射缺失、等级缺失或值为 null 时按 none 处理。
-    thinkingLevelMap: dict[str, NonEmptyString | None] | None = None
 
     @property
     def available_thinking_levels(self) -> tuple[str, ...]:
-        """统一展示顺序：none 在首位，已声明的 low/medium/high/max 从低到高。
+        """从 SDK 本地数据派生等级；不联网、不修改模型目录或猜造未知能力。
 
-        排除 null 能力，不补造模型未声明的等级；自定义名称无法推断强度，
-        放在已知等级后按名称排序。仅派生展示值，不改写映射或配置。
+        目录解析会补齐缺失的 provider；独立且未标明厂商的定义只提供 none 回退项。
         """
-        preferred = ("low", "medium", "high", "max")
-        supported = {key for key, value in (self.thinkingLevelMap or {}).items()
-                     if key != "none" and value is not None}
-        known = tuple(level for level in preferred if level in supported)
-        custom = tuple(sorted(supported.difference(preferred)))
-        return ("none", *known, *custom)
+        return get_model_capabilities(provider=self.provider or "", model=self.id).available_levels
 
 
 class ProviderModels(BaseModel):
@@ -84,6 +78,19 @@ _AUTH_ADAPTER = TypeAdapter(
 _MODEL_STORE_ADAPTER = TypeAdapter(
     dict[str, ProviderModels], config=ConfigDict(hide_input_in_errors=True)
 )
+
+
+def _bind_provider_names(catalog: dict[str, ProviderModels]) -> dict[str, ProviderModels]:
+    """给目录中省略厂商的模型绑定外层名称；保留显式不匹配值供原有校验拒绝。"""
+    return {provider: ProviderModels(models=[
+        model.model_copy(update={"provider": provider}) if model.provider is None else model
+        for model in group.models
+    ]) for provider, group in catalog.items()}
+
+
+def parse_model_store(document: object) -> dict[str, ProviderModels]:
+    """校验内存目录并绑定所属厂商；与磁盘读取共用同一规则，不请求 SDK 目录或写入。"""
+    return _bind_provider_names(_MODEL_STORE_ADAPTER.validate_python(document))
 
 
 @cache
@@ -110,8 +117,8 @@ def load_model_store() -> dict[str, ProviderModels]:
     path = root / "agent" / "model-store.json"
     content = path.read_text(encoding="utf-8")
     try:
-        return _MODEL_STORE_ADAPTER.validate_json(content)
+        return _bind_provider_names(_MODEL_STORE_ADAPTER.validate_json(content))
     except ValidationError:
         raise ValueError(
-            f"模型目录 {path} 格式无效，请检查 JSON、models 列表、唯一 id、baseUrl 地址和 thinkingLevelMap"
+            f"模型目录 {path} 格式无效，请检查 JSON、models 列表、唯一 id 和 baseUrl 地址"
         ) from None

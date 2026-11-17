@@ -1,6 +1,7 @@
 """共用组装测试：临时假配置与本地模型，CLI/API 不再依赖旧入口函数。"""
 
 import asyncio
+from collections.abc import Callable, Iterator
 import json
 from importlib import import_module
 from pathlib import Path
@@ -16,7 +17,10 @@ from omt.core.settings import AuthCredential, ModelDefinition, Settings, load_se
 
 
 @pytest.fixture
-def config_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def config_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sdk_reasoning: Callable[..., None],
+) -> Iterator[Path]:
+    sdk_reasoning("deepseek", "deepseek-chat", ("low", "high", "max"))
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("defaultProvider", raising=False)
     monkeypatch.delenv("defaultModel", raising=False)
@@ -43,7 +47,7 @@ def config_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 @pytest.fixture
 def model_factory(monkeypatch: pytest.MonkeyPatch) -> Mock:
     factory = Mock(return_value=FakeListChatModel(responses=["本地回复"]))
-    monkeypatch.setattr(import_module("omt.ai.models.deepseek"), "init_chat_model", factory)
+    monkeypatch.setattr(import_module("omt.ai.litellm_backend"), "initialize_litellm_model", factory)
     return factory
 
 
@@ -54,12 +58,12 @@ def test_get_ollama_model_without_auth_file(config_dir: Path, monkeypatch: pytes
     }), encoding="utf-8")
     fake = FakeListChatModel(responses=["本地回复"])
     factory = Mock(return_value=fake)
-    monkeypatch.setattr(import_module("omt.ai.models.ollama"), "init_chat_model", factory)
+    monkeypatch.setattr(import_module("omt.ai.litellm_backend"), "initialize_litellm_model", factory)
     client = _get_model(Settings(defaultProvider="ollama", defaultModel="qwen3:8b"))
     assert client.model is fake and fake.invoke("输入").content == "本地回复"
     options = factory.call_args.kwargs
-    assert options["model_provider"] == "ollama" and options["model"] == "qwen3:8b"
-    assert options["reasoning"] is False and "api_key" not in options
+    assert options["provider"] == "ollama" and options["model"] == "qwen3:8b"
+    assert options["reasoning_effort"] == "none" and "api_key" not in options
     assert not (config_dir / "auth.json").exists()
 
 
@@ -69,12 +73,11 @@ def test_get_model_joins_settings_auth_and_matching_catalog_entry(config_dir: Pa
     assert client.provider == "deepseek"
     assert client.model is model_factory.return_value
     model_factory.assert_called_once_with(
-        model_provider="deepseek",
-        configurable_fields=None,
-        config_prefix=None,
+        provider="deepseek",
         model="deepseek-chat",
-        base_url="https://example.test/v1",
+        base_url=HttpUrl("https://example.test/v1"),
         api_key=SecretStr("test-only-key"),
+        reasoning_effort="none",
     )
 
 
@@ -140,11 +143,11 @@ def test_get_model_uses_url_of_exact_selected_model_not_first_entry(config_dir: 
 
     _get_model(load_settings())
 
-    assert model_factory.call_args.kwargs["base_url"] == "https://selected.example.test/v1"
+    assert model_factory.call_args.kwargs["base_url"] == HttpUrl("https://selected.example.test/v1")
 
 
 @pytest.mark.parametrize("level, effort", [("high", "max"), ("none", "high")])
-def test_get_model_maps_selected_thinking_level(
+def test_get_model_uses_sdk_level_and_ignores_legacy_mapping(
     config_dir: Path, model_factory: Mock, level: str, effort: str,
 ) -> None:
     _ = (config_dir / "model-store.json").write_text(json.dumps({
@@ -160,12 +163,9 @@ def test_get_model_maps_selected_thinking_level(
 
     assert client.model is model_factory.return_value
     options = model_factory.call_args.kwargs
-    if level == "none":
-        assert "reasoning_effort" not in options
-        assert "extra_body" not in options
-    else:
-        assert options["reasoning_effort"] == effort
-        assert options["extra_body"] == {"thinking": {"type": "enabled"}}
+    # 验证组装传给统一底座的参数；厂商线协议由 ai 层的真实 SDK 替身测试覆盖。
+    assert options["reasoning_effort"] == level  # 旧 high→max 映射不再参与解析。
+    assert "extra_body" not in options
 
 
 @pytest.mark.parametrize("metadata", [
@@ -189,8 +189,29 @@ def test_get_model_uses_none_when_thinking_is_unconfigured_or_unavailable(
 
     assert client.model is model_factory.return_value
     options = model_factory.call_args.kwargs
-    assert "reasoning_effort" not in options
+    assert options["reasoning_effort"] == "none"
     assert "extra_body" not in options
+
+
+def test_off_catalog_model_remains_callable_without_sdk_capability_metadata(
+    config_dir: Path, model_factory: Mock, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """手动导入的可信模型不受 SDK 内置目录限制；未知能力只回退等级，不阻止调用。"""
+    (config_dir / "settings.json").write_text(json.dumps({
+        "defaultProvider": "openai", "defaultModel": "test-future-model", "defaultThinkingLevel": "high",
+    }), encoding="utf-8")
+    (config_dir / "auth.json").write_text(json.dumps({"openai": {"type": "api_key", "key": "fake-key"}}))
+    (config_dir / "model-store.json").write_text(json.dumps({"openai": {"models": [{
+        "id": "test-future-model", "baseUrl": "https://trusted.example.test/v1",
+        "thinkingLevelMap": {"high": "max"},
+    }]}}))
+    monkeypatch.setattr("omt.ai.litellm_backend.litellm.get_valid_models", Mock(side_effect=AssertionError("启动不查目录")))
+    client = _get_model(load_settings())
+    assert client.model.invoke("离线测试").content == "本地回复"
+    assert model_factory.call_args.kwargs["provider"] == "openai"
+    assert model_factory.call_args.kwargs["model"] == "test-future-model"
+    assert model_factory.call_args.kwargs["reasoning_effort"] == "none"
+    assert model_factory.call_args.kwargs["base_url"] == HttpUrl("https://trusted.example.test/v1")
 
 
 def test_get_model_rejects_unregistered_provider_before_initializing_model(config_dir: Path, model_factory: Mock) -> None:
@@ -202,14 +223,13 @@ def test_get_model_rejects_unregistered_provider_before_initializing_model(confi
     model_factory.assert_not_called()
 
 
-@pytest.mark.parametrize("override, expected", [(None, "max"), ("none", "none"), ("low", "low")])
+@pytest.mark.parametrize("override, expected", [(None, "high"), ("none", "none"), ("low", "low")])
 def test_build_model_from_explicit_snapshot_does_not_read_configuration_files(
     config_dir: Path, model_factory: Mock, override: str | None, expected: str,
 ) -> None:
-    """隔离运行复用内部工厂和等级映射；删除配置后仍只使用所选快照，不触碰用户文件。"""
+    """隔离运行复用连接快照和 SDK 能力；删除配置后仍不触碰用户文件。"""
     settings = Settings(defaultProvider="deepseek", defaultModel="deepseek-chat", defaultThinkingLevel="high")
-    definition = ModelDefinition(id="deepseek-chat", baseUrl=HttpUrl("https://snapshot.example.test/v1"),
-                                 thinkingLevelMap={"high": "max"})
+    definition = ModelDefinition(id="deepseek-chat", baseUrl=HttpUrl("https://snapshot.example.test/v1"))
     for path in config_dir.glob("*.json"):
         path.unlink()
     client = _get_model(
@@ -219,12 +239,9 @@ def test_build_model_from_explicit_snapshot_does_not_read_configuration_files(
     )
     assert isinstance(client.model, FakeListChatModel)
     options = model_factory.call_args.kwargs
-    assert options["base_url"] == "https://snapshot.example.test/v1"
+    assert options["base_url"] == HttpUrl("https://snapshot.example.test/v1")
     assert options["api_key"] == SecretStr("snapshot-test-key")
-    if expected == "none":
-        assert "reasoning_effort" not in options
-    else:
-        assert options["reasoning_effort"] == expected
+    assert options["reasoning_effort"] == expected
     assert not list(config_dir.glob("*.json"))
 
 
@@ -265,7 +282,6 @@ def test_get_model_rejects_mismatched_definition_snapshot(
 ) -> None:
     definition = ModelDefinition(
         id=model_id, provider=provider, baseUrl=HttpUrl("https://example.test/v1"),
-        thinkingLevelMap={"high": "high"},
     )
 
     with pytest.raises(ValueError, match="与配置不一致"):

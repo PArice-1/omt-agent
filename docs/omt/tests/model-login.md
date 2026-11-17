@@ -7,13 +7,13 @@
 - core：[model_configuration.py](../../../backend/src/omt/core/model_configuration.py)、[bootstrap.py](../../../backend/src/omt/core/bootstrap.py)、[store.py](../../../backend/src/omt/core/store.py)。
 - CLI：[login.py](../../../backend/src/omt/cli/login.py)、[app.py](../../../backend/src/omt/cli/app.py)。
 - 测试：[test_model_configuration.py](../../../backend/tests/core/test_model_configuration.py)、[test_login.py](../../../backend/tests/cli/test_login.py)。
-- 厂商地址、协议和 HTTP 限制见[模型测试](ai-models.md#厂商模型目录查询)。
+- 统一 SDK、目录来源和覆盖限制见[模型测试](ai-models.md#厂商模型目录查询)。
 
 保证配置处理在 core，厂商地址/协议在 ai，CLI 仅交互。无配置也能进入输入循环等待 `/login`，新增厂商不需要修改 CLI/core 分支。
 
 本次需求替换旧预期：删除输入 URL、是否查询与保存确认；已登录厂商复用 Key，自动拉取完整列表并全部导入。选模型同时更新默认选择并切换当前 Runtime，不再保持旧默认/旧运行模型。取消只发生在选定模型之前；首次获取失败不接受凭空手填 ID，已有认证和目录时可离线选择缓存。这些变化是明确的交互调整，不以放松断言掩盖旧行为。
 
-本次回归补充：此前完整目录仅导入 ID，导致 deepseek-flash 缺少 thinkingLevelMap，只显示 none。现在将厂商模块已确认的能力随目录合并；旧条目缺失/null 时通过再次 /login 补齐，已有自定义映射和显式空表不覆盖。未知 ID 不按名称猜测能力。
+本次能力迁移：删除 DeepSeek 硬编码等级及登录补写逻辑。model-store.json 只保存目录/连接，思考等级运行时取 LiteLLM 本地元数据。旧 thinkingLevelMap 读取时忽略且不触发写盘；确认保存某厂商时删除该厂商所有条目的旧字段，保留其他元数据/旧模型/其他厂商。SDK 元数据更新不需重新登录。
 
 本次修复 Ollama 上层仍要求 Key 的回归：认证要求由注册表 requires_api_key 决定，默认 True 保持原云端行为；Ollama 为 False。输入 DTO 的 api_key 可省略，免 Key 厂商丢弃兼容输入、不新建或改写 auth.json，也不读取旧占位 Key；认证厂商仍拒绝缺失或空白 Key。“已登录”语义不扩大为本地服务已就绪。
 
@@ -27,8 +27,9 @@
 | 兼容旧占位 Key 与已有认证 | 输入 None/空串/空白/假 Key；已有 DeepSeek Key 与 Ollama 旧 OAuth 字段 | Ollama DTO 归一为 None；保存后 auth 字节不变；Ollama 不虚报已登录，DeepSeek 凭据仍可用 | test_ollama_ignores_keys_and_preserves_existing_auth |
 | 本地查询失败和缓存 | 无缓存或已导入本地模型；目录替身抛假敏感标记，兼容传入旧 Key | 无缓存时安全提示启动服务/下载模型，不索取 Key、不落盘；有缓存时 from_cache=true，连接始终无凭据 | test_ollama_discovery_failure_needs_no_key_and_only_uses_real_cache |
 | 首次完整导入 | 无配置，提交 flash，完整列表含 flash/pro | 三份 JSON 可读回；两个模型均使用厂商模块地址；auth 权限 0600（POSIX）；无目录/聊天请求或数据库副作用；就绪检查和登录状态正确 | test_first_login_saves_entire_catalog_and_provider_url_without_database |
-| 已知模型能力及旧配置修复 | 首次导入或已存在但缺映射的 deepseek-flash；完整列表另含 deepseek-v4-pro、相似未知 ID | 两个已知 ID 导入 low/high/max；未知 ID 不填能力，旧价格等字段保留；重复导入字节不变 | test_login_imports_known_thinking_capabilities_and_repairs_old_entries |
-| 自定义能力保留 | 已知模型已有 null、空表、自定义 high 或 high→null | 仅 null 补齐官方映射；空表和自定义映射保持原值 | test_known_capabilities_only_fill_missing_or_null_mapping |
+| Moonshot 国内站与旧目录刷新 | 首次登录或已有 kimi-k2.7-code 条目使用旧 .ai 地址；SDK 目录返回假模型列表 | 预览只读且向 SDK 传 .cn/v1；确认后全部返回模型使用 .cn/v1，旧元数据和认证字节保留；不验证真实 Key/模型权限 | test_moonshot_login_uses_china_endpoint_and_refreshes_saved_url |
+| 多厂商目录与 SDK 能力分离 | DeepSeek/OpenAI/Gemini，各有 SDK 已知/未知模型；保存后更新 SDK 元数据 | 全部 ID 自动保存且没有能力字段；SDK 更新可出现 minimal/xhigh，不重写目录，未知仅 none | test_login_saves_connections_and_capabilities_follow_sdk |
+| 旧能力字段清理边界 | 本次厂商的新旧条目含 null/空表/自定义/错误形态；另有其他厂商及价格 | 普通读取不写；保存只清理本次厂商旧字段，旧 ID/其他元数据/其他厂商不丢，重复导入字节稳定 | test_save_removes_obsolete_maps_only_for_selected_provider |
 | 不完整/不同默认 | settings 为空、只有厂商、只有旧模型或 null/空白 | 显式选择 pro 后默认厂商/模型一致，并就绪，不保留错配的旧字段 | test_selection_fills_or_replaces_default_fields |
 | 合并与认证复用 | 已缓存 flash，目录含自定义 URL、思考映射、价格、旧条目和其他厂商；认证有额外字段 | 默认切 pro、缓存失效，思考等级保留；导入项地址来自厂商模块，旧项和元数据保留；认证字节不变 | test_selection_updates_default_but_preserves_metadata_other_providers_and_auth |
 | 重复导入 | 完整列表有乱序、重复及首尾空白 ID，再选 pro | 归一、去重，不重复追加；默认选择更新 | test_repeated_import_deduplicates_full_catalog_and_selected_model |
@@ -39,7 +40,7 @@
 | 非法或不匹配目录 | 空列表、空白 ID 或列表中无所选模型 | 拒绝保存，不生成文件 | test_empty_invalid_or_unselectable_catalog_is_not_saved |
 | 损坏 auth | 非 JSON 或非法认证字段，含敏感标记 | 安全异常及完整 traceback 不含原文，现有文件不覆盖、其他文件不生成 | test_invalid_existing_auth_is_rejected_without_overwrite_or_secret_in_traceback |
 | 输入校验 | 未注册厂商、空 ID/Key，或旧 base_url 参数 | 类型校验拒绝，无文件副作用，错误不回显 Key；登录 DTO 不再接受地址 | test_login_input_validation_hides_secrets_and_no_longer_accepts_url |
-| 厂商扩展 | 临时注册 second，参数化 requires_api_key=True/False，模块地址与本地目录函数 | 认证路径收到假 Key 且写 auth，免 Key 路径收到 None 且不写 auth；两者查询地址、默认选择和能力映射均正确，不初始化聊天，不硬编码 Ollama | test_new_provider_defines_its_own_address_without_cli_or_core_changes |
+| 厂商扩展 | 注册 second，requires_api_key=True/False，注入 SDK 本地能力 | 认证路径保存假 Key，免 Key 路径不写 auth；统一目录/能力入口正确，不初始化聊天 | test_new_provider_defines_its_own_address_without_cli_or_core_changes |
 | 不兼容配置 | OAuth 或同 ID 声明其他厂商 | 保存前拒绝，文件集合和字节不变 | test_incompatible_existing_configuration_is_not_overwritten |
 | 显式初始化数据库 | 缺失库，或已有仅含自定义表的库 | 缺失时能经真实 SessionStore 查询；已有时字节不变，不迁移 | test_explicit_database_initialization_only_creates_missing_files |
 
@@ -52,7 +53,7 @@
 | 无模型启动 | 无配置无库，输入普通消息、/resume、/thinking、/exit | 只提示登录，不初始化 SDK、不生成文件、不执行消息 | test_missing_configuration_enters_cli_and_only_prompts_login_without_writes |
 | Ollama 无 Key 登录与重启 | /login、ollama、完整模型名、普通消息、退出，再重启发送 | 只询问厂商和模型，不出现 api_key 提示；显示无需 API Key；SDK 无 Key，真实 Manager 完成两次启动对话，保存索引且始终无 auth.json | test_ollama_login_skips_key_and_can_chat_after_restart |
 | 首次简化登录后对话 | /LoGiN、厂商、Key、flash、普通消息 | 不问 URL/查询/确认；导入 flash/pro，SDK 收到选择和厂商地址，能立即回答；仅普通消息登记会话，不打印 Key | test_first_login_only_asks_provider_key_and_model_and_saves_full_catalog |
-| Flash 能力导入与 SDK 参数 | 无配置，或启动时已有无映射的 Flash；/login 后依次切换 low/high/max/none | 新旧两种路径均补全完整目录映射，可选等级按 none/low/high/max 排列，不再按字母把 high 放到 low 前；SDK 实际收到 low/high/max/none，none 携带 disabled thinking；不再显示“无有效映射”或旧的省略参数提示 | test_flash_login_imports_levels_and_applies_each_effort |
+| SDK 等级与登录回归 | 测试注入 Flash/Pro 的 SDK low/high/max；首次/旧目录登录后逐项切换 | 两条路径均从 SDK 获得等级、底座收到同名值和 none；不写 thinkingLevelMap，不把测试声明当真实 SDK 已提供该模型等级 | test_flash_login_imports_levels_and_applies_each_effort |
 | 再次选择模型 | 已登录厂商，输入厂商编号和 pro 编号 | 显示已登录；仅两次输入，不索取 Key；认证字节不变、默认切 pro | test_logged_in_provider_only_asks_model_and_keeps_credentials_unchanged |
 | 对话中切模型 | 先完成一轮 Flash，再 /login 选 Pro，继续第二轮 | SDK 分别初始化 Flash/Pro，新模型收到完整、无重复的历史；仅一条会话记录，默认选择更新 | test_login_switches_running_model_and_preserves_one_session_history |
 | 只登录退出 | 首次成功登录后 /exit | 可生成配置和缺失库，不登记空会话、不发送聊天请求 | test_login_command_itself_never_registers_empty_session |
@@ -63,7 +64,7 @@
 | 新厂商相同交互 | 临时注册 second 后选择该厂商 | 使用同一交互，完整目录地址来自注册项，默认厂商正确 | test_new_registered_provider_uses_same_simple_selection |
 | 禁止行内参数 | /login bad-argument，再退出 | 不发送给模型、不保存 | test_login_with_arguments_is_not_sent_to_model_or_saved |
 | 真实终端秘密清理 | PromptSession/pipe 输入 Key 后 EOF，或直接选择模型编号 | Key 不在历史/缓冲，历史对象、普通显示和原校验器恢复；无保存确认；EOF 无文件 | test_real_terminal_key_history_and_validator_are_restored |
-| 新模型思考映射与失败保护 | 原会话完成后模拟失败；切换带 high→max 的 pro，再修改强度 | 新 Runtime 使用 pro 的映射，SDK 收到 max；旧 Manager 关闭，新 Manager 仍拒绝失败会话历史，不能靠换模型绕过保护 | test_model_switch_uses_new_thinking_map_and_keeps_failed_session_guard |
+| 新模型 SDK 能力与失败保护 | 原会话失败后切到 SDK 声明 high 的 pro；旧目录保留 high→max | high 直接传 high，不使用旧映射；新 Manager 继续拒绝失败会话，换模型不能绕过保护 | test_model_switch_uses_sdk_capabilities_and_keeps_failed_session_guard |
 | 组装失败/取消与重试 | 第二次 Agent 组装失败，或在 Event 等待时并发切换并取消 | 失败/取消保留原 Manager 和模型；并发切换报 busy，不强制取消运行；之后可重试成功，测试任务 finally 回收 | test_failed_or_cancelled_model_switch_keeps_runtime_and_allows_retry |
 | 保存后切换失败 | 已运行 flash，选 pro 后 SDK 构建失败，再普通消息 | 默认 pro 已保存，当前仍由 flash 回答，明确提示两种状态且不泄露错误原文 | test_switch_failure_keeps_running_model_but_records_saved_default |
 | 首次保存后初始化失败 | 初次登录完成后 SDK 失败 | 配置已保存，CLI 仍允许登录/退出，普通消息被阻止，安全提示 | test_initialization_failure_after_login_keeps_cli_available |
@@ -71,7 +72,7 @@
 ## 隔离方式
 
 - core/CLI 共享 fixture 隔离 settings.root、cwd、数据库、Skills 和 MCP，前后清空设置缓存；本组清理模型选择环境变量。所有写入在 tmp_path，Key 为假值。
-- core 保存无网络。准备流程用 AsyncMock 返回完整目录；扩展厂商专项用本地函数保留真实路由。core 测试还阻止真实 DeepSeek HTTP；ai 专项仅用内存 HTTP 响应。
+- core 保存无网络。准备流程用 AsyncMock 返回完整目录；扩展厂商专项用本地函数保留真实路由。core 测试阻止真实 SDK 目录入口；ai 协议专项使用真实桥接与内存 HTTP 传输。
 - CLI 自动替换 discover_models，不触达目录 API；SDK 返回记录输入的本地 RecordingModel，仍使用真实 Manager、SQLite 和检查点。不执行外部工具/MCP。
 - 终端专项用 PromptSession、内存 pipe、InMemoryHistory、DummyOutput 和五秒超时；其余用 AsyncMock 脚本输入。
 - Runtime 异常用 SDK/Agent/Conversation 的限定替身；Event 控制并发时机，finally/cancel/gather 回收测试创建的任务。思考切换已有的 MCP 复用和活跃运行约束继续由[推理强度测试](thinking.md)覆盖。
@@ -82,7 +83,7 @@
 uv run pytest -q tests/core/test_model_configuration.py tests/cli/test_login.py tests/ai tests/cli/test_thinking.py --tb=no
 uv run pytest -q tests/cli tests/core/test_store.py tests/core/test_bootstrap.py --tb=no
 uv run pytest -q --tb=no
-basedpyright --pythonpath .venv/bin/python src/omt/core/model_configuration.py src/omt/core/bootstrap.py src/omt/ai/models_manager.py src/omt/ai/models/deepseek.py src/omt/cli/login.py src/omt/cli/app.py tests/core/test_model_configuration.py tests/cli/test_login.py tests/ai/test_model_catalog.py
+basedpyright --pythonpath .venv/bin/python src/omt/core/model_configuration.py src/omt/core/bootstrap.py src/omt/ai/models_manager.py src/omt/ai/litellm_backend.py src/omt/cli/login.py src/omt/cli/app.py tests/core/test_model_configuration.py tests/cli/test_login.py tests/ai/test_model_catalog.py
 ```
 
 ## 覆盖限制

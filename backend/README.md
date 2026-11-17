@@ -18,7 +18,7 @@ OMT 基于 LangChain / LangGraph 构建：由模型与工具循环完成任务�
 - **Skills 发现**：发现可信目录中的 `SKILL.md`，将名称、描述和路径提供给模型，由模型按需读取正文。
 - **共用核心**：CLI 与 API 共用模型配置、工具组装和会话管理逻辑。
 
-当前模型提供商已注册 **DeepSeek** 和 **Ollama**。Ollama 底层适配使用 `langchain-ollama` 的原生本地推理协议，默认地址为 `http://localhost:11434`，支持无 Key 的 Python 初始化及已下载模型查询；CLI/TUI/HTTP 首次配置均支持免 Key 选择 Ollama，本地模型不需要账号、凭据或占位 Key。增加其他提供商仍需要扩展代码，并非修改配置即可支持任意模型。
+模型调用与目录查询均统一使用 **LiteLLM + ChatLiteLLM**，不再保留原生 DeepSeek/Ollama 适配。当前开放十一个 API Key/免 Key 厂商，可在 [models_manager.py](src/omt/ai/models_manager.py) 的配置表增删；Ollama 仍无需 Key。模型发现可能由 SDK 返回内置目录，不能将列表非空视为凭据/服务已验证。完整范围、依赖版本和限制见 [模型架构](../docs/omt/architecture.md#3-模型连接与配置)。
 
 ## 快速开始
 
@@ -45,25 +45,36 @@ CLI 与 API 共用以下三个文件，默认从用户目录读取，而不是�
     └── omt.sqlite
 ```
 
-直接运行 `uv run omt` 进入 TUI。默认模型、认证或模型目录不完整时，提示按 **F2** 或输入 `/login`，不会自动启动配置向导或发送模型请求。用方向键/鼠标选厂商：DeepSeek 首次输入隐藏 Key，Ollama 跳过 Key 直接查询本地已下载模型，选择模型即保存。请先自行启动 Ollama 并下载需要的模型。
+直接运行 `uv run omt` 进入 TUI。默认模型、认证或模型目录不完整时，提示按 **F2** 或输入 `/login`，不会自动启动配置向导或发送模型请求。用方向键/鼠标选厂商：DeepSeek 首次输入隐藏 Key，Ollama 跳过 Key，通过 LiteLLM 获取目录，选择模型即保存。请先自行启动 Ollama 并下载需要的模型。
 
 下面是可选的 `uv run omt --plain` 逐行模式示例：
 
 ```text
 You> /login
-支持的厂商：deepseek、ollama
-1. deepseek（未登录）
-2. ollama（无需 API Key）
+支持的厂商：anthropic、deepseek、gemini、groq、mistral、moonshot、ollama、openai、openrouter、together_ai、xai
+1. anthropic（未登录）
+2. deepseek（未登录）
+3. gemini（未登录）
+4. groq（未登录）
+5. mistral（未登录）
+6. moonshot（未登录）
+7. ollama（无需 API Key）
+8. openai（未登录）
+9. openrouter（未登录）
+10. together_ai（未登录）
+11. xai（未登录）
 provider（编号或名称）> deepseek
 api_key> （隐藏输入，仅首次需要）
-1. <厂商返回的模型 ID-A>
-2. <厂商返回的模型 ID-B>
+1. <SDK 返回的模型 ID-A>
+2. <SDK 返回的模型 ID-B>
 model（编号或名称）> 1
 ```
 
-`/login` 可以随时使用：选厂商 → 需认证且未登录时输入 Key（Ollama 跳过）→ 选择模型，随后自动保存，不再询问地址、是否拉取或是否保存。已登录厂商显示“已登录”并复用凭据，例如在同厂商的 Pro/Flash 间选择无需重新输入 Key；TUI 用选择列表，逐行模式支持编号和名称，模型 ID 以厂商实际返回列表为准。
+Moonshot 默认使用国内开放平台地址 `https://api.moonshot.cn/v1`，应搭配国内站 Key；国际站 Key 需使用对应国际站地址，不自动跨站尝试。已有目录不会在启动时自动改写：如果此前保存了 `.ai` 地址，重启后重新 `/login` 选择 Moonshot 模型，才会按注册表刷新本次返回模型的地址。
 
-地址由对应厂商模块维护，DeepSeek 默认使用 [deepseek.py](src/omt/ai/models/deepseek.py) 的官方地址。每次 `/login` 自动拉取该厂商完整目录，全部导入 `model-store.json`，并非只保存选中的模型；已登录时刷新失败可使用本地缓存，首次获取失败则提示重试。保留其他厂商、旧目录元数据和自定义思考映射；厂商模块为已确认的 deepseek-flash/deepseek-v4-pro 自动补齐 low/high/max，未知 ID 不猜测能力。旧配置缺映射时，重新启动后再次 /login 选择模型即可补齐，无需重输 Key。普通启动仅本地检查，不自动拉取目录。
+`/login` 可以随时使用：选厂商 → 需认证且未登录时输入 Key（Ollama 跳过）→ 选择模型，随后自动保存，不再询问地址、是否拉取或是否保存。已登录厂商显示“已登录”并复用凭据，例如在同厂商的 Pro/Flash 间选择无需重新输入 Key；TUI 用选择列表，逐行模式支持编号和名称，模型 ID 以 SDK 返回列表为准。
+
+地址由注册配置表维护。每次 `/login` 通过 LiteLLM 查询，选定模型后导入全部返回 ID，不只保存所选项；取消不写、快捷切换不刷新。SDK 可使用内置目录/静态回退，不保证每家实时联网。`model-store.json` 继续保存模型目录和连接信息；思考能力只从 LiteLLM 本地数据解析，不再维护 DeepSeek 等级表或依赖旧 thinkingLevelMap。普通启动不查询目录、不清理用户文件；下次保存对应厂商时才清理废弃字段。详见 [模型架构](../docs/omt/architecture.md#3-模型连接与配置)。
 
 CLI 只收集输入，core 校验、合并相关 JSON 并更新默认模型。Ollama 仅保存 settings/model-store，不创建或修改 auth.json，已有其他厂商认证和旧占位 Key 保持原样，但不使用旧 Ollama Key。首次完成登录后创建缺失数据库，即可继续发消息；已有运行环境会立即切换模型，保留会话和历史。切换失败时当前运行保留原模型，已保存的默认选择仍生效于后续启动。需认证厂商共用一个 Key，已保存的凭据不会因选模型而替换；选择完成前取消/EOF 不落盘，损坏配置不自动覆盖。
 

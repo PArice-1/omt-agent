@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import asynccontextmanager
 from importlib import import_module
 from pathlib import Path
@@ -47,7 +47,10 @@ class RecordingModel(FakeMessagesListChatModel):
 
 
 @pytest.fixture
-def model_config(cli_db: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def model_config(
+    cli_db: Path, monkeypatch: pytest.MonkeyPatch, sdk_reasoning: Callable[..., None],
+) -> Path:
+    sdk_reasoning("deepseek", "test-model", ("low", "high"))
     for name in ("defaultProvider", "defaultModel", "defaultThinkingLevel"):
         monkeypatch.delenv(name, raising=False)
     directory = settings_module.root / "agent"
@@ -61,7 +64,6 @@ def model_config(cli_db: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     _ = (directory / "model-store.json").write_text(json.dumps({
         "deepseek": {"models": [{
             "id": "test-model", "baseUrl": "https://example.test/v1",
-            "thinkingLevelMap": {"high": "max", "low": "high", "unsupported": None},
         }]},
     }), encoding="utf-8")
     return directory / "settings.json"
@@ -72,7 +74,7 @@ def models(monkeypatch: pytest.MonkeyPatch) -> tuple[RecordingModel, RecordingMo
     old = RecordingModel(responses=[AIMessage(content="旧模型回答")])
     new = RecordingModel(responses=[AIMessage(content="新模型回答")])
     factory = Mock(side_effect=[old, new])
-    monkeypatch.setattr(import_module("omt.ai.models.deepseek"), "init_chat_model", factory)
+    monkeypatch.setattr(import_module("omt.ai.litellm_backend"), "initialize_litellm_model", factory)
     return old, new, factory
 
 
@@ -92,13 +94,13 @@ def test_cli_switch_rebuilds_and_preserves_history(
     ]
     assert len(asyncio.run(SessionStore(CliSettings().db_path).list_sessions(tmp_path))) == 1
     assert factory.call_count == 2
-    assert "reasoning_effort" not in factory.call_args_list[0].kwargs
-    assert factory.call_args_list[1].kwargs["reasoning_effort"] == "max"
+    assert factory.call_args_list[0].kwargs["reasoning_effort"] == "none"
+    assert factory.call_args_list[1].kwargs["reasoning_effort"] == "high"
     assert model_config.read_text() == original_config
     assert settings_module.load_settings().defaultThinkingLevel is None
     output = capsys.readouterr().out
     assert "实际 reasoning_effort：none" in output
-    assert "实际 reasoning_effort：max" in output
+    assert "实际 reasoning_effort：high" in output
     assert "可选等级：none、low、high" in output
     assert "新模型回答" in output
     assert "test-only-key" not in output
@@ -118,9 +120,9 @@ def test_switch_to_none_does_not_keep_previous_thinking_options(
     asyncio.run(run_cli())
 
     assert factory.call_count == 2
-    assert factory.call_args_list[0].kwargs["reasoning_effort"] == "max"
-    assert factory.call_args_list[0].kwargs["extra_body"] == {"thinking": {"type": "enabled"}}
-    assert "reasoning_effort" not in factory.call_args_list[1].kwargs
+    assert factory.call_args_list[0].kwargs["reasoning_effort"] == "high"
+    assert "extra_body" not in factory.call_args_list[0].kwargs
+    assert factory.call_args_list[1].kwargs["reasoning_effort"] == "none"
     assert "extra_body" not in factory.call_args_list[1].kwargs
     assert len(new.seen) == 1
 
@@ -140,7 +142,7 @@ def test_thinking_commands_do_not_create_sessions_and_use_none(
     assert asyncio.run(SessionStore(CliSettings().db_path).list_sessions(tmp_path)) == []
     # 同一请求等级不重建；不存在的等级也必须显示实际回退结果。
     assert factory.call_count == (1 if level == "none" else 2)
-    assert "reasoning_effort" not in factory.call_args.kwargs
+    assert factory.call_args.kwargs["reasoning_effort"] == "none"
     output = capsys.readouterr().out
     assert "用法：/thinking" in output
     assert "实际 reasoning_effort：none" in output
@@ -179,7 +181,7 @@ def test_switch_failure_keeps_old_manager_and_status(
     assert len(old.seen) == 1
     output = capsys.readouterr().out
     assert "推理强度切换失败" in output
-    assert "实际 reasoning_effort：max" not in output
+    assert "实际 reasoning_effort：high" not in output
     assert "test-sensitive-sdk-error" not in output
     assert "旧模型回答" in output
 
@@ -344,7 +346,7 @@ def test_cancelled_switch_keeps_old_manager_and_can_close(
                 assert result.answer == "旧模型回答"
                 await runtime.set_thinking_level("high")
                 assert runtime.manager is not previous
-                assert runtime.thinking.reasoning_effort == "max"
+                assert runtime.thinking.reasoning_effort == "high"
             finally:
                 _ = switching.cancel()
                 _ = await asyncio.gather(switching, return_exceptions=True)
@@ -383,7 +385,9 @@ def test_fixed_manager_reports_unsupported_without_reading_config(
 def test_startup_without_thinking_capability_shows_only_none(
     model_config: Path, models: tuple[RecordingModel, RecordingModel, Mock],
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], mapping: object,
+    sdk_reasoning: Callable[..., None],
 ) -> None:
+    sdk_reasoning("deepseek", "test-model", None if mapping is None else ())
     _ = (model_config.parent / "model-store.json").write_text(json.dumps({
         "deepseek": {"models": [{
             "id": "test-model", "baseUrl": "https://example.test/v1", "thinkingLevelMap": mapping,
