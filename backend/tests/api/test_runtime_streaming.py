@@ -4,7 +4,7 @@ import asyncio
 import json
 import os
 import sqlite3
-from collections.abc import AsyncGenerator, Iterator, Sequence
+from collections.abc import AsyncGenerator, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager, closing
 from pathlib import Path
 from typing import Any, Self, override
@@ -55,7 +55,11 @@ class RecordingModel(FakeMessagesListChatModel):
 
 
 @pytest.fixture(autouse=True)
-def isolation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+def isolation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sdk_reasoning: Callable[..., None],
+) -> Iterator[None]:
+    for model in MODELS[:2]:
+        sdk_reasoning("deepseek", model, ("low", "high", "max"))
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(settings, "root", tmp_path / ".omt")
     for name in tuple(os.environ):
@@ -225,8 +229,9 @@ def test_first_configuration_is_preview_then_confirm_and_runs(config: ApiSetting
         assert status["configured"] is False and status["ready"] is False
         assert client.get("/api/omt/models").json() == []
         assert client.get("/api/omt/providers").json() == [
-            {"provider": "deepseek", "logged_in": False, "requires_api_key": True},
-            {"provider": "ollama", "logged_in": False, "requires_api_key": False},
+            {"provider": provider, "logged_in": False,
+             "requires_api_key": model_configuration.provider_requires_api_key(provider)}
+            for provider in model_configuration.supported_providers()
         ]
         assert not settings.root.exists() and not config.db_path.exists() and not sdk
         assert client.post("/api/omt/sessions", json={}).json()["error"]["code"] == "runtime_not_ready"
@@ -263,7 +268,7 @@ def test_ollama_configuration_without_key_runs_switches_and_restarts(
     factory = Mock(return_value=RecordingModel(responses=[
         AIMessage(content="本地回答"), AIMessage(content="本地后续回答"),
     ]))
-    monkeypatch.setattr("omt.ai.models.ollama.init_chat_model", factory)
+    monkeypatch.setattr("omt.ai.litellm_backend.initialize_litellm_model", factory)
     with TestClient(create_app(config)) as client:
         providers = client.get("/api/omt/providers").json()
         assert next(item for item in providers if item["provider"] == "ollama") == {

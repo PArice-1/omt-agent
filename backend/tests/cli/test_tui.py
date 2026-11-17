@@ -126,22 +126,25 @@ def test_invalid_commands_do_not_run_model_or_exit(command: str, tmp_path: Path)
 
 
 def test_login_thinking_and_model_switch_use_core_without_exposing_key(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, sdk_reasoning: Callable[..., None],
 ) -> None:
+    for model_id in ("deepseek-flash", "deepseek-v4-pro"):
+        sdk_reasoning("deepseek", model_id, ("low", "high", "max"))
     for key in ("defaultProvider", "defaultModel", "defaultThinkingLevel"):
         monkeypatch.delenv(key, raising=False)
     discover = AsyncMock(return_value=["deepseek-flash", "deepseek-v4-pro"])
     monkeypatch.setattr(model_configuration, "discover_models", discover)
     model = LocalModel(responses=[AIMessage(content="离线回答")])
+    provider_steps = ["down"] * (model_configuration.supported_providers().index("deepseek") + 1)
     sdk = Mock(return_value=model)
-    monkeypatch.setattr(import_module("omt.ai.models.deepseek"), "init_chat_model", sdk)
+    monkeypatch.setattr(import_module("omt.ai.litellm_backend"), "initialize_litellm_model", sdk)
 
     async def execute() -> None:
         app = OmtApp()
         async with app.run_test(size=(100, 40)) as pilot:
             await idle(pilot, app)
             await pilot.press("f2")
-            await pilot.press("enter", "down", "enter")
+            await pilot.press("enter", *provider_steps, "enter")
             await pilot.pause()
             await pilot.press(*"fake-tui-key", "enter")
             await until(pilot, lambda: not app.screen.query_one("#login-model", Select).disabled)
@@ -168,7 +171,7 @@ def test_login_thinking_and_model_switch_use_core_without_exposing_key(
             await idle(pilot, app)
             assert sdk.call_args.kwargs["reasoning_effort"] == "high"
             await pilot.press("f2")
-            await pilot.press("enter", "down", "enter")
+            await pilot.press("enter", *provider_steps, "enter")
             await until(pilot, lambda: not app.screen.query_one("#login-model", Select).disabled)
             assert not app.screen.query_one("#api-key", Input).display
             await pilot.press("enter", "down", "down", "enter")
@@ -191,7 +194,7 @@ def test_ollama_selection_skips_key_and_can_retry(
         discover.side_effect = [ValueError("test-private-marker"), ["qwen3:8b"]]
     monkeypatch.setattr(model_configuration, "discover_models", discover)
     factory = Mock(return_value=LocalModel(responses=[AIMessage(content="离线回答")]))
-    monkeypatch.setattr(import_module("omt.ai.models.ollama"), "init_chat_model", factory)
+    monkeypatch.setattr(import_module("omt.ai.litellm_backend"), "initialize_litellm_model", factory)
 
     async def execute() -> None:
         app = OmtApp()

@@ -1,15 +1,22 @@
-"""AI 测试的共享 fixture（本文件不包含测试用例）。
+"""统一模型层的工厂替身；保留 Model、注册表与 LiteLLM 参数转换，不访问网络。"""
 
-作用：只替换 src/omt/ai/models/deepseek.py 使用的外部 init_chat_model，
-不替换 Model、models_provider 或 deepseek_init，保留真实的内部调用链。
-返回本地 FakeListChatModel，禁止真实 API 请求；密钥均为无效测试占位值。
-"""
-
-from importlib import import_module
+import socket
 from unittest.mock import Mock
 
 import pytest
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
+
+from omt.ai import litellm_backend
+
+
+@pytest.fixture(autouse=True)
+def no_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """即使 SDK 的客户端接缝变化，也必须在解析域名/连接前阻断真实网络。"""
+    def deny(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("模型层测试禁止真实网络")
+
+    monkeypatch.setattr(socket, "getaddrinfo", deny)
+    monkeypatch.setattr(socket.socket, "connect", deny)
 
 
 @pytest.fixture
@@ -18,11 +25,7 @@ def chat_model() -> FakeListChatModel:
 
 
 @pytest.fixture
-def chat_model_factory(
-    monkeypatch: pytest.MonkeyPatch,
-    chat_model: FakeListChatModel,
-) -> Mock:
+def chat_model_factory(monkeypatch: pytest.MonkeyPatch, chat_model: FakeListChatModel) -> Mock:
     factory = Mock(return_value=chat_model)
-    module = import_module("omt.ai.models.deepseek")
-    monkeypatch.setattr(module, "init_chat_model", factory)
+    monkeypatch.setattr(litellm_backend, "ChatLiteLLM", factory)
     return factory

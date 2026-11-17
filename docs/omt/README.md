@@ -24,6 +24,7 @@ OMT 当前是一个基于 LangChain/LangGraph 的 Agent 应用，CLI 与支持 J
 
 ## 方案调研
 
+- [可独立复用的开源 Agent 模型层调研](research/ai-provider-modules.md)：比较 LiteLLM、Pi、PydanticAI、OpenCode 等现成模型层，记录维护、许可、模块边界、删减限制及 OMT 一次接入多厂商的路线。
 - [TUI 展示层方案调研](research/tui-frameworks.md)：比较 Textual、prompt-toolkit 与 Urwid，记录实验分支的选型、落地与验证边界。
 - [Skills 模块设计调研](research/skills-design.md)：比较其他 Agent 的实现，并记录 OMT 的初步建议；不是已实现功能说明。
 

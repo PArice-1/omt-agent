@@ -43,11 +43,11 @@ GET /api/omt/runtime
   "busy": false,
   "running": 0,
   "thinking": {
-    "provider": "deepseek",
-    "model": "deepseek-flash",
+    "provider": "openai",
+    "model": "gpt-5.1",
     "level": "high",
     "reasoning_effort": "high",
-    "available_levels": ["none", "low", "high", "max"]
+    "available_levels": ["none", "low", "medium", "high"]
   },
   "message": "运行环境已就绪"
 }
@@ -64,9 +64,9 @@ GET /api/omt/runtime
 | `thinking` | 当前运行配置；尚无运行实例时为 null |
 | `message` | 安全状态提示，不含底层异常原文 |
 
-`thinking.level` 是请求等级；`reasoning_effort` 是当前模型实际映射结果。例如 level=high 而 effort=none，表示保留请求等级但当前模型无法映射。UI 必须提示回退，不能把请求等级当实际能力。
+`thinking.level` 是请求等级，reasoning_effort 是由 SDK 能力解析后的值：支持时同名透传，否则 none 回退，不再使用磁盘 high→max 映射。UI 必须提示回退，不能把请求等级当实际能力；none 是应用默认项，不保证服务端关闭推理。
 
-`available_levels` 已按展示顺序返回：none 在首位，已支持的 low → medium → high → max 从低到高排列；未声明或映射为 null 的等级不返回。当前已知 DeepSeek 模型为 `none → low → high → max`。其他自定义名称保留在已知等级后并按名称排序，不推断其强度。运行状态、快捷模型列表和流中运行快照使用同一规则，**前端直接保留服务端顺序，不再按字母排序**。本次只调整数组顺序，不改变等级名称、映射含义或配置文件。
+`available_levels` 保留服务端顺序：none 在首，其余来自 LiteLLM 元数据（含 minimal/xhigh），未声明的不补造。未知能力与明确无推理能力都可能只返回 none，但前者并不表示模型不支持推理；不增加响应字段或改变 HTTP/SSE 契约。运行状态、快捷列表及流快照共用相同能力源，**前端不要重排**。下面具名模型与数组是协议示例，不是每个 SDK 版本的能力保证；实际以返回值为准。
 
 ### GET /api/omt/providers
 
@@ -87,8 +87,8 @@ GET /api/omt/runtime
 
 ```json
 [
-  {"provider":"deepseek","model":"deepseek-flash","available_levels":["none","low","high","max"],"current":true},
-  {"provider":"deepseek","model":"deepseek-v4-pro","available_levels":["none","low","high","max"],"current":false}
+  {"provider":"openai","model":"gpt-5","available_levels":["none","minimal","low","medium","high"],"current":false},
+  {"provider":"openai","model":"gpt-5.1","available_levels":["none","low","medium","high"],"current":true}
 ]
 ```
 
@@ -100,7 +100,7 @@ GET /api/omt/runtime
 {"provider":"deepseek","model":"deepseek-v4-pro"}
 ```
 
-200 返回完整 RuntimeResponse。必须来自本地快捷目录，不接受任意地址或未知模型。切换时重新读取所选模型目录和凭据，保留原请求思考等级；缺映射时实际按 none。
+200 返回完整 RuntimeResponse。必须来自本地快捷目录，不接受任意地址或未导入模型。切换时重读所选目录和凭据，保留请求等级；SDK 未声明时按 none 回退。
 
 ### PUT /api/omt/runtime/thinking
 
@@ -141,7 +141,9 @@ Ollama 首次使用也直接省略 Key，不要求任何本地认证文件：
 {"provider":"ollama"}
 ```
 
-请求会查询默认 `http://localhost:11434/api/tags` 的已下载模型。兼容客户端传入 null、空字符串或旧占位 Key 时，会归一为无凭据，不保存或发送；推荐直接不传 api_key。DeepSeek 的空字符串仍为 422，省略时必须有可复用的 Key。Ollama 未启动或无模型时返回安全的 422 `login_preview_failed`，提示检查本地服务和已下载模型，不索取 Key。
+Ollama 目录通过 LiteLLM 查询，默认服务地址仍为 `http://localhost:11434`。兼容传入 null、空字符串或旧占位 Key 时归一为无凭据，不保存或使用；推荐直接省略 api_key。DeepSeek 的空字符串仍为 422，省略时必须有可复用 Key。SDK 返回空/失败且无可用缓存时返回安全的 422 `login_preview_failed`，不索取 Ollama Key。
+
+底层统一为 LiteLLM，不改变本页路径、字段或配置确认步骤。**目录结果可能是 SDK 内置列表或静态回退，不保证每家实时查询；非空不证明 Key 有效、服务可达或模型已下载。** `from_cache` 仍只标记 OMT 自己复用的本地目录，false 不保证数据来自在线接口。
 
 成功为 201：
 

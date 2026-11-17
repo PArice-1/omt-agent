@@ -5,7 +5,7 @@ import json
 import os
 import sqlite3
 import traceback
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import closing
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
@@ -14,7 +14,6 @@ import pytest
 from pydantic import HttpUrl, SecretStr, ValidationError
 
 from omt.ai import models_manager
-from omt.ai.models.deepseek import DEEPSEEK_BASE_URL
 from omt.core import model_configuration as configuration, settings
 from omt.core.model_configuration import ModelLogin, ProviderConnection, check_model_configuration, save_model_login
 from omt.core.store import SessionStore, initialize_session_database
@@ -24,7 +23,7 @@ from omt.core.store import SessionStore, initialize_session_database
 def isolated_login(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     for key in ("defaultProvider", "defaultModel", "defaultThinkingLevel"):
         monkeypatch.delenv(key, raising=False)
-    monkeypatch.setattr("omt.ai.models.deepseek.build_opener", Mock(side_effect=AssertionError("禁止真实 HTTP")))
+    monkeypatch.setattr("omt.ai.litellm_backend.litellm.get_valid_models", Mock(side_effect=AssertionError("禁止真实 HTTP")))
     yield
 
 
@@ -104,7 +103,8 @@ def test_first_login_saves_entire_catalog_and_provider_url_without_database(tmp_
     assert credential is not None and credential.get_secret_value() == "fake-login-key"
     models = settings.load_model_store()["deepseek"].models
     assert [entry.id for entry in models] == ["flash", "pro"]
-    assert all(entry.baseUrl == DEEPSEEK_BASE_URL and entry.thinkingLevelMap is None for entry in models)
+    assert all(entry.baseUrl == models_manager.models["deepseek"].base_url for entry in models)
+    assert "thinkingLevelMap" not in (settings.root / "agent" / "model-store.json").read_text()
     assert check_model_configuration().ready
     assert configuration.is_provider_logged_in("deepseek")
     assert not (tmp_path / "agent" / "state").exists()
@@ -113,34 +113,83 @@ def test_first_login_saves_entire_catalog_and_provider_url_without_database(tmp_
 
 
 @pytest.mark.parametrize("existing", [False, True])
-def test_login_imports_known_thinking_capabilities_and_repairs_old_entries(existing: bool) -> None:
+def test_moonshot_login_uses_china_endpoint_and_refreshes_saved_url(
+    existing: bool, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """国内站登录统一使用 .cn；确认后刷新旧国际站地址，预览不写盘且保留模型元数据。"""
+    model_name = "kimi-k2.7-code"
     if existing:
-        _ = document("model-store.json", {"deepseek": {"models": [{
-            "id": "deepseek-flash", "baseUrl": str(DEEPSEEK_BASE_URL), "price": {"input": 1},
+        _ = document("auth.json", {"moonshot": {"type": "api_key", "key": "fake-login-key"}})
+        _ = document("model-store.json", {"moonshot": {"models": [{
+            "id": model_name, "baseUrl": "https://api.moonshot.ai/v1", "label": "keep",
         }]}})
-    names = ("deepseek-flash", "deepseek-v4-pro", "deepseek-flash-unknown")
-    _ = save("deepseek-flash", model_names=names)
-    models = {model.id: model for model in settings.load_model_store()["deepseek"].models}
-    expected = {"low": "low", "high": "high", "max": "max"}
-    assert models["deepseek-flash"].thinkingLevelMap == expected
-    assert models["deepseek-v4-pro"].thinkingLevelMap == expected
-    assert models["deepseek-flash-unknown"].thinkingLevelMap is None
-    path = settings.root / "agent" / "model-store.json"
+    directory = settings.root / "agent"
+    before = {path: path.read_bytes() for path in directory.iterdir()} if directory.exists() else {}
+    catalog = Mock(return_value=[model_name, "test-other-model"])
+    monkeypatch.setattr("omt.ai.litellm_backend.litellm.get_valid_models", catalog)
+    prepared = asyncio.run(configuration.prepare_provider_login(
+        "moonshot", None if existing else SecretStr("fake-login-key"),
+    ))
+    assert catalog.call_args.kwargs["api_base"] == "https://api.moonshot.cn/v1"
+    assert catalog.call_args.kwargs["custom_llm_provider"] == "moonshot"
+    after = {path: path.read_bytes() for path in directory.iterdir()} if directory.exists() else {}
+    assert after == before
+    _ = save_model_login(ModelLogin(
+        provider="moonshot", model_name=model_name, api_key=prepared.connection.api_key,
+    ), model_names=prepared.model_names)
+    models = settings.load_model_store()["moonshot"].models
+    assert [entry.id for entry in models] == [model_name, "test-other-model"]
+    assert all(str(entry.baseUrl) == "https://api.moonshot.cn/v1" for entry in models)
+    assert settings.load_settings().defaultModel == model_name
+    assert check_model_configuration().ready
     if existing:
-        assert json.loads(path.read_text())["deepseek"]["models"][0]["price"] == {"input": 1}
+        stored = json.loads((directory / "model-store.json").read_text())
+        assert stored["moonshot"]["models"][0]["label"] == "keep"
+        assert (directory / "auth.json").read_bytes() == before[directory / "auth.json"]
+
+
+@pytest.mark.parametrize("provider", ["deepseek", "openai", "gemini"])
+def test_login_saves_connections_and_capabilities_follow_sdk(
+    provider: str, sdk_reasoning: Callable[..., None],
+) -> None:
+    """各厂商完整目录都自动保存；SDK 能力更新不需要重写目录文件。"""
+    sdk_reasoning(provider, "test-sdk-model", ("low", "high"))
+    _ = save("test-sdk-model", provider=provider, model_names=("test-sdk-model", "test-unknown"))
+    path = settings.root / "agent" / "model-store.json"
     before = path.read_bytes()
-    _ = save("deepseek-flash", model_names=names)
+    stored = json.loads(before)[provider]["models"]
+    assert all("thinkingLevelMap" not in entry for entry in stored)
+    assert [entry.id for entry in settings.load_model_store()[provider].models] == ["test-sdk-model", "test-unknown"]
+    assert settings.load_model_store()[provider].models[0].available_thinking_levels == ("none", "low", "high")
+    sdk_reasoning(provider, "test-sdk-model", ("minimal", "high", "xhigh"))
+    choices = configuration.list_configured_models()
+    assert choices[0].available_levels == ("none", "minimal", "high", "xhigh")
+    assert choices[1].available_levels == ("none",)
     assert path.read_bytes() == before
 
 
-@pytest.mark.parametrize("mapping", [None, {}, {"high": "custom"}, {"high": None}])
-def test_known_capabilities_only_fill_missing_or_null_mapping(mapping: dict[str, str | None] | None) -> None:
-    _ = document("model-store.json", {"deepseek": {"models": [{
-        "id": "deepseek-flash", "baseUrl": str(DEEPSEEK_BASE_URL), "thinkingLevelMap": mapping,
-    }]}})
-    _ = save("deepseek-flash", model_names=("deepseek-flash",))
-    actual = settings.load_model_store()["deepseek"].models[0].thinkingLevelMap
-    assert actual == ({"low": "low", "high": "high", "max": "max"} if mapping is None else mapping)
+@pytest.mark.parametrize("mapping", [None, {}, {"high": "custom"}, {"high": None}, ["obsolete"]])
+def test_save_removes_obsolete_maps_only_for_selected_provider(mapping: object) -> None:
+    """只清理本次保存厂商的旧字段；旧条目、额外元数据及其他厂商保持原值。"""
+    other = {"models": [{"id": "keep", "baseUrl": "https://other.test", "thinkingLevelMap": {"high": "max"}}]}
+    path = document("model-store.json", {
+        "deepseek": {"models": [
+            {"id": "flash", "baseUrl": "https://old.test", "thinkingLevelMap": mapping, "price": 1},
+            {"id": "legacy", "baseUrl": "https://legacy.test", "thinkingLevelMap": {"high": "max"}},
+        ]}, "gemini": other,
+    })
+    before = path.read_bytes()
+    assert settings.load_model_store()["deepseek"].models[0].available_thinking_levels == ("none",)
+    assert path.read_bytes() == before
+    _ = save("flash", model_names=("flash", "pro"))
+    stored = json.loads(path.read_text())
+    assert stored["gemini"] == other
+    assert [entry["id"] for entry in stored["deepseek"]["models"]] == ["flash", "legacy", "pro"]
+    assert all("thinkingLevelMap" not in entry for entry in stored["deepseek"]["models"])
+    assert stored["deepseek"]["models"][0]["price"] == 1
+    cleaned = path.read_bytes()
+    _ = save("flash", model_names=("flash", "pro"))
+    assert path.read_bytes() == cleaned
 
 
 @pytest.mark.parametrize("partial", [{}, {"defaultProvider": "deepseek"}, {"defaultModel": "old-model"},
@@ -169,8 +218,8 @@ def test_selection_updates_default_but_preserves_metadata_other_providers_and_au
     assert settings.load_settings().defaultThinkingLevel == "high"
     models = settings.load_model_store()["deepseek"].models
     assert [entry.id for entry in models] == ["flash", "legacy", "pro"]
-    assert models[0].baseUrl == DEEPSEEK_BASE_URL
-    assert models[0].thinkingLevelMap == {"high": "max"}
+    assert models[0].baseUrl == models_manager.models["deepseek"].base_url
+    assert "thinkingLevelMap" not in (auth.parent / "model-store.json").read_text()
     assert str(models[1].baseUrl) == "https://legacy.test/"
     assert '"cost"' in (auth.parent / "model-store.json").read_text()
     assert '"source": "keep"' in (auth.parent / "model-store.json").read_text()
@@ -264,8 +313,9 @@ def test_login_input_validation_hides_secrets_and_no_longer_accepts_url(change: 
 
 @pytest.mark.parametrize("requires_key", [True, False])
 def test_new_provider_defines_its_own_address_without_cli_or_core_changes(
-    monkeypatch: pytest.MonkeyPatch, requires_key: bool,
+    monkeypatch: pytest.MonkeyPatch, requires_key: bool, sdk_reasoning: Callable[..., None],
 ) -> None:
+    sdk_reasoning("second", "second-pro", ("high",))
     received: list[tuple[str | None, str]] = []
 
     def catalog(*, api_key: SecretStr | None, base_url: HttpUrl) -> list[str]:
@@ -275,7 +325,7 @@ def test_new_provider_defines_its_own_address_without_cli_or_core_changes(
     initializer = Mock(side_effect=AssertionError("配置阶段不初始化聊天模型"))
     monkeypatch.setitem(models_manager.models, "second", models_manager.ModelProvider(
         initialize=initializer, list_models=catalog, base_url=HttpUrl("https://second.test/v1"),
-        thinking_level_maps={"second-pro": {"high": "max"}}, requires_api_key=requires_key,
+        requires_api_key=requires_key,
     ))
     prepared = asyncio.run(configuration.prepare_provider_login("second", SecretStr("fake-login-key")))
     assert prepared.model_names == ("second-flash", "second-pro")
@@ -283,7 +333,7 @@ def test_new_provider_defines_its_own_address_without_cli_or_core_changes(
     assert settings.load_settings().defaultProvider == "second"
     assert check_model_configuration().ready
     assert all(str(model.baseUrl) == "https://second.test/v1" for model in settings.load_model_store()["second"].models)
-    assert settings.load_model_store()["second"].models[1].thinkingLevelMap == {"high": "max"}
+    assert settings.load_model_store()["second"].models[1].available_thinking_levels == ("none", "high")
     assert received == [("fake-login-key" if requires_key else None, "https://second.test/v1")]
     assert (settings.root / "agent" / "auth.json").exists() is requires_key
     initializer.assert_not_called()

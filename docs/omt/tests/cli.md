@@ -25,7 +25,7 @@
 | MCP 非法配置 | stdio command 为空 | 抛 ValidationError，不静默回退并启用默认服务 | test_cli_mcp_invalid_environment_does_not_fall_back_to_default |
 | 临时 Skills 隔离 | 共享 fixture 生效后构造 CliSettings | skill_roots 精确等于 tmp_path/skills，不落回真实用户目录；只解析设置，不扫描文件 | test_cli_fixture_uses_only_temporary_skill_roots |
 | Skills 配置选择 | default 删除 CLI 覆盖；custom 设置相对目录；disabled 设置 []；另设置 API 的无关目录 | 分别得到 ~/.agents/skills、当前临时目录下的 custom-skills、空列表；API 前缀不影响 CLI，默认目录只解析不扫描 | test_cli_skill_roots_use_user_default_or_explicit_configuration |
-| 完整默认组装 | 临时模型 JSON（显式选择 high 并映射到 high）、预建库、文件与 Skill；参数 skills_enabled 分别开启临时目录和显式关闭；假模型真实调用 read 后继续第二轮 | 经过 bootstrap/Manager/Conversation 与真实同步 read；SDK 替身收到 reasoning_effort=high 及 enabled thinking；启用时系统消息包含临时 Skill 元数据但无正文，关闭时不含 Skills 目录；回答/工具结果可见、假 Key 不显示；重开数据库后系统消息唯一、两轮与工具结果无重复 | test_cli_runs_manager_and_read_tool_without_network |
+| 完整默认组装 | 临时 JSON 选择 high，SDK 替身声明 high；预建库/文件/Skill，启用或禁用 Skills | 经真实 bootstrap/Manager/Conversation 和 read 工具完成两轮，统一底座收到 high；Skills 开关生效，无假 Key 泄露；SQLite 历史无重复 | test_cli_runs_manager_and_read_tool_without_network |
 | 提示词不可用 | 包资源加载替身抛 FileNotFoundError/ValueError | 原异常传播，模型初始化尚未发生，不静默退化 | test_cli_stops_before_model_when_prompt_loading_fails |
 | 无库或无索引表 | 缺文件/父目录，或已有库删除 sessions 表 | 启动失败，未初始化模型、不创建目录或索引表 | test_cli_invalid_database_fails_before_model_and_does_not_create_schema |
 

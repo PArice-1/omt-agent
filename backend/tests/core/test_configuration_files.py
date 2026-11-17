@@ -95,7 +95,8 @@ def test_model_store_parses_model_url_and_ignores_catalog_metadata(config_dir: P
     assert model.id == "deepseek-chat"
     assert model.provider == "deepseek"
     assert str(model.baseUrl) == "https://example.test/v1"
-    assert model.thinkingLevelMap == {"media": "high", "unsupported": None, "none": "none"}
+    assert "thinkingLevelMap" not in model.model_dump()
+    assert model.available_thinking_levels == ("none",)
 
 
 @pytest.mark.parametrize("content", [
@@ -116,7 +117,7 @@ def test_invalid_model_store_is_rejected(config_dir: Path, content: str):
 
 
 @pytest.mark.parametrize("mapping", [[], "high", {"media": 1}, {"media": ""}, {"media": "   "}])
-def test_model_store_rejects_invalid_thinking_mapping(config_dir: Path, mapping: object) -> None:
+def test_model_store_ignores_obsolete_thinking_mapping(config_dir: Path, mapping: object) -> None:
     _ = (config_dir / "model-store.json").write_text(json.dumps({
         "deepseek": {"models": [{
             "id": "deepseek-chat", "baseUrl": "https://example.test/v1",
@@ -124,8 +125,12 @@ def test_model_store_rejects_invalid_thinking_mapping(config_dir: Path, mapping:
         }]},
     }), encoding="utf-8")
 
-    with pytest.raises(ValueError, match="thinkingLevelMap"):
-        load_model_store()
+    path = config_dir / "model-store.json"
+    before = path.read_bytes()
+    model = load_model_store()["deepseek"].models[0]
+    assert "thinkingLevelMap" not in model.model_dump()
+    assert model.available_thinking_levels == ("none",)
+    assert path.read_bytes() == before  # 普通读取不能为了清理旧字段写入文件。
 
 
 def test_missing_model_store_file_raises(config_dir: Path):

@@ -1,68 +1,70 @@
-# 模型初始化测试说明
+# 统一模型底座测试说明
 
-本文中的模块级命令在仓库的 `backend/` 目录执行；根目录命令见 [开发说明](../../development.md).
+本文中的命令在仓库 `backend/` 目录执行；根目录命令见 [开发说明](../../development.md)。
 
 ## 对象与目的
 
-验证“Model 包装对象 → 提供商注册表 → DeepSeek 初始化函数 → SDK 初始化”的调用链，确保参数校验在调用模型前完成，构造失败不会被当成一个有效模型保存。
+源码：[model.py](../../../backend/src/omt/ai/model.py)、[models_manager.py](../../../backend/src/omt/ai/models_manager.py)、[litellm_backend.py](../../../backend/src/omt/ai/litellm_backend.py)。
 
-源码：
+保证上层仍使用 `Model(provider, model=..., base_url=..., **kwargs).model`、`ModelProvider`、`models_provider` 和 `list_provider_models`。只有底座改为 ChatLiteLLM + LiteLLM；原生 DeepSeek/Ollama SDK 与 OMT 自写 HTTP 查询已移除，没有后端切换开关或原生回退。Agent、Conversation、配置 DTO、JSON 和 HTTP/SSE 字段不改。
 
-- [model.py](../../../backend/src/omt/ai/model.py)
-- [models_manager.py](../../../backend/src/omt/ai/models_manager.py)
-- [models/deepseek.py](../../../backend/src/omt/ai/models/deepseek.py)
+原 test_deepseek.py 中针对旧 SDK 的参数/HTTP 断言已由统一层与真实 LiteLLM 离线协议用例替代，不能继续要求 OMT 构造旧 extra_body。
 
-Ollama 原生本地适配的无 Key 初始化、目录、思考选项与真实 SDK 离线协议验证另见 [Ollama 测试](ollama.md)；共用注册表现包含 DeepSeek/Ollama，DeepSeek 旧调用链不变。
+## 初始化与协议场景
 
-测试文件沿用 [test_ai.py](../../../backend/tests/ai/test_ai.py) 名称，但实际导入对象是 `omt.ai.model.Model`；不要根据旧名称恢复已移走的 ai.py 模块。
-
-## 场景
-
-| 场景 | 输入 / 前置条件 | 预期结果 | 对应测试 |
+| 场景 | 输入 / 前置条件 | 预期结果 | 测试文件 / 函数 |
 | --- | --- | --- | --- |
-| 创建可用模型 | 已注册 provider、HTTP URL、假 Key 和 temperature | 构造立即初始化；保存 provider/base_url，client.model 为可调用的本地模型 | test_ai.py：test_constructor_initializes_and_stores_usable_model |
-| 显式初始化参数 | 在构造后调用私有初始化方法并传入另一个模型名及 max_tokens | 指定值沿真实内部调用链传到 SDK 初始化位置，不被旧值覆盖 | test_ai.py：test_private_init_model_returns_model_using_explicit_parameters |
-| 注册表路由 | DeepSeek 配置与额外 args | 返回 SDK 替身；参数正确传递，调用者的 args 字典保持原值 | [test_models_manager.py](../../../backend/tests/ai/test_models_manager.py)：test_registered_provider_returns_usable_model |
-| DeepSeek 启用思考 | effort 为 high/max，额外请求体含自定义字段和 disabled thinking，另传 max_tokens | 返回可调用假模型；SDK 收到原 effort 和 enabled thinking；保留其他选项，不修改原请求体 | test_deepseek.py：test_reasoning_effort_enables_thinking_and_preserves_options |
-| 旧/未知模型不主动配置思考 | 旧模型 deepseek-chat 的 effort 为 Python None 或字符串 none，extra_body 为空或含自定义字段；原有效参数用例不传 effort | 不向 SDK 传 reasoning_effort，不新增 thinking；已有请求体保持原值，不伪造 disabled | test_deepseek.py：test_no_reasoning_effort_does_not_configure_thinking、test_valid_parameters_return_usable_model |
-| 已知模型三档与关闭 | deepseek-flash/deepseek-v4-pro，effort 分别为 None/none/low/high/max，请求体已有自定义字段及 enabled thinking | None 不设置参数；low/high/max 原样下发且 enabled；字符串 none 显式下发并改为 disabled，保留其他字段且不修改调用者对象；返回可调用假模型 | test_deepseek.py：test_known_models_forward_thinking_levels_and_explicitly_disable_none |
-| 类型转换 | URL/Key 分别使用字符串或 HttpUrl/SecretStr | 接受合法输入；传给 SDK 的 URL 是字符串，Key 保持 SecretStr | [test_deepseek.py](../../../backend/tests/ai/test_deepseek.py)：test_valid_parameters_return_usable_model |
-| 未注册 provider | 空或未知 provider | 拒绝创建，不调用 SDK 初始化 | test_ai.py、test_models_manager.py 的 unknown_provider 用例 |
-| 缺失或空白 Key | 无 Key、None、空串、空格或换行 | 缺失/非法参数校验失败；空白 Key 被明确拒绝，不调用 SDK | 三个测试文件的 missing/blank/validation 用例 |
-| 错误 URL 或参数类型 | 非 HTTP(S) URL、非法 provider/model/Key 类型 | 对应参数位置校验失败 | test_deepseek.py：test_invalid_parameters_are_rejected |
-| 参数校验异常包装 | 提供商初始化抛 Pydantic ValidationError | 注册表层转为带参数错误提示的 ValueError，并保留原始 cause | test_models_manager.py：test_validation_error_is_wrapped_with_original_cause |
-| 外部初始化失败 | SDK 替身抛 ValueError 或 RuntimeError | 原始异常继续传播，不返回错误字符串或伪模型 | 三个文件的 initialization_error / error_propagates 用例 |
+| 全部开放厂商 | 注册表每个 provider、含斜杠与标签的模型 ID、假凭据、temperature | 同一个 ChatLiteLLM 工厂；保留 ID，显式路由、地址、Key 与选项；返回可调用模型；Ollama 路由为 ollama_chat | test_ai.py：test_all_providers_use_common_litellm_bridge |
+| 上层默认 none | 参数能力表声称支持 reasoning_effort，但具体 SDK 等级不声明 none；另测 high | 不发送未知关闭值；high 不静默丢弃，交 SDK 校验；不能仅根据参数名支持就推断支持 none | test_ai.py：test_shared_none_contract_does_not_break_non_reasoning_models |
+| 构造失败 | 工厂抛假异常 | 原异常传播，不保存字符串或伪模型 | test_ai.py：test_constructor_does_not_return_a_model_on_failure |
+| 注册与认证 | 未登记厂商、空/非法 Key、空白模型名 | SDK 构造前失败；注册范围可扩展，但不代表 LiteLLM 的全部认证方式都已接入 | test_models_manager.py 的 registry、unknown、cloud、blank 用例 |
+| 运行时类型校验 | provider/model 非字符串、FTP 地址、错误 Key/effort 类型 | 注册回调拒绝，不初始化 SDK | test_models_manager.py：test_registered_initializer_validates_types_before_sdk |
+| 免 Key 与参数副作用 | Ollama 输入旧假 Key、none、num_ctx | 不向底座传旧 Key，保留其他选项，原字典不变 | test_models_manager.py：test_ollama_discards_compatibility_key_and_does_not_mutate_options |
+| DeepSeek 同步/异步协议 | 测试元数据显式声明 none/high；真实 SDK、MockTransport 与代理前缀 | none/high 分别转换 disabled/enabled；保留路径、正文、reasoning 和 usage；不声称 SDK 包内已给 DeepSeek 完整档位 | test_litellm_backend.py：test_deepseek_uses_litellm_translation_and_preserves_reasoning |
+| SDK 认证失败 | MockTransport 返回 HTTP 401 | 同步/异步继续传播 AuthenticationError，不返回假答案，不重复请求 | test_litellm_backend.py：test_sdk_authentication_failure_propagates_without_fake_answer |
+| 原有上层流与工具循环 | 真实 Model → Agent → Conversation；SSE 返回 reasoning 与分片工具参数 | 同步/异步都只执行一次工具，结果带原调用 ID 回传；正文/reasoning 事件不重复、不混入答案；检查点恢复后保留完整历史 | test_litellm_stream.py：test_existing_conversation_interface_stream_tools_and_resume |
 
-正常初始化用例同时核对 `configurable_fields=None`、`config_prefix=None`：OMT 的 Model 需要直接可调用的聊天模型，SDK 工厂不返回运行时再选模型的包装器。此项覆盖 test_ai.py、test_models_manager.py 和 test_deepseek.py 的正常初始化断言。
+Ollama 同步/异步协议专项见 [Ollama 测试](ollama.md)。SDK 能力的登录、组装和运行切换见 [组装测试](session-and-config.md)、[登录测试](model-login.md)、[推理测试](thinking.md)。这些测试仅注入 SDK 元数据，不再通过本地目录映射指定能力。
+
+## SDK 本地思考能力
+
+[test_model_capabilities.py](../../../backend/tests/ai/test_model_capabilities.py) 使用真实固定版本的数据验证 gpt-5 的 minimal/low/medium/high，以及 gpt-5.1 的 none/low/medium/high；同时用临时 model_cost 条目验证多厂商、非连续档位不补 medium、未知与明确不支持分离、裸模型名不跨厂商串用。所有路径被 ai 的 DNS/socket 防护约束，不调用 get_model_info 或 Ollama /api/show。
+
+SDK 等级解析依赖内部 resolve_supported_reasoning_efforts，升级依赖须重跑此专项。上层测试显式申请根 tests/conftest.py 的 sdk_reasoning fixture，只替换测试模型元数据，非 autouse，不污染真实 SDK 专项。none 是应用回退项，只有 SDK 明确声明才作为关闭参数发送。
 
 ## 厂商模型目录查询
 
-新增 [test_model_catalog.py](../../../backend/tests/ai/test_model_catalog.py)，通过公开 list_provider_models → models[provider].list_models → ai/models/deepseek.py 验证目录查询。注册表每项为 ModelProvider(initialize, list_models, base_url)，地址来自厂商模块（DeepSeek 为 DEEPSEEK_BASE_URL）；目录入口只需 provider/api_key，不接收用户地址或当前模型名，因此查询不按当前模型过滤。注册项另可提供 thinking_level_maps（默认空表），由厂商模块维护精确模型 ID 的官方能力，core 导入时合并；/models 响应仍只提供 ID，不从名称推测未知能力。模型初始化入口 models_provider 的调用参数不变，原有初始化回归继续保留。
+[test_model_catalog.py](../../../backend/tests/ai/test_model_catalog.py) 经公开 `list_provider_models` 调用 `litellm.get_valid_models(check_provider_endpoint=True, ...)`。仅按所选 provider 查询，传可信默认地址和适用凭据，不再补发 OMT 的 /models 或 /api/tags 请求。
 
 | 场景 | 输入 / 前置条件 | 预期结果 | 对应测试 |
 | --- | --- | --- | --- |
-| 厂商地址与底层显式覆盖 | 注册表入口不传 URL；底层适配另测带 /proxy/v1/ 的覆盖地址，内存响应含重复/乱序的多个 ID | 默认请求模块定义的官网；底层仍能保留覆盖地址前缀以便测试/代理适配（不在 /login 暴露）。追加 /models，带 Bearer 和十秒超时，完整返回全部去重排序 ID并关闭响应 | test_catalog_uses_provider_default_or_explicit_low_level_prefix |
-| 非法响应 | 空列表、错误 ID 类型、非法 JSON、超过 1 MiB | 安全 ValueError，不显示响应或测试敏感标记，响应关闭 | test_invalid_catalog_response_is_sanitized_and_closed |
-| 网络及读取异常 | HTTPError、URLError 或 IncompleteRead，错误含敏感标记 | 安全错误，不回显详情；存在的 HTTP 响应关闭；安装的 handler 不允许重定向 | test_catalog_errors_hide_details_and_close_http_resources |
-| 云端 Key 要求保留 | 公共目录入口省略 Key 或传入空串/纯空白；DeepSeek HTTP 构建器替身 | 初始化 HTTP 前拒绝，不能因新增本地免 Key 能力而放宽 DeepSeek；注册项默认要求 Key，目录回调只在免认证时收到 None | test_cloud_catalog_still_requires_nonblank_key |
-| 未注册厂商 | unknown provider | 明确拒绝，不访问网络 | test_unregistered_provider_catalog_is_rejected |
+| 全部厂商走 SDK | 每个注册项；SDK 返回带 provider 前缀、重复、空白与多层斜杠的 ID | 指定 provider/地址/Key，去掉匹配的一个前缀，保留其余 ID 和标签；去空、去重、排序 | test_catalog_uses_litellm_and_preserves_raw_ids |
+| 空目录/失败 | 空列表、仅空白或前缀、SDK 异常带假敏感标记 | 安全 ValueError，不泄露原异常，不伪造模型 | test_empty_or_failed_catalog_is_a_safe_error |
+| 连接校验 | 未知厂商、需认证厂商无 Key | 调用 SDK 前拒绝 | test_catalog_rejects_invalid_connection_before_sdk |
+| SDK 内置目录 | SDK 直接返回 DeepSeek 内置 ID | 直接采用，不补写官网 HTTP 请求；非空不能解释成 Key 已验证 | test_static_catalog_does_not_trigger_extra_official_request |
 
-注册第二个测试厂商即可完成查询和持久化、不改 core/CLI 的扩展性证据在[模型登录测试](model-login.md)。
+**目录来源的限制：**`check_provider_endpoint=True` 不等于每家都会联网。安装版本的 DeepSeek 可返回包内目录，Ollama 等也可能在 SDK 内部回退。上层 `from_cache` 只表示 OMT 自己复用保存的目录，不表示 SDK 结果必为实时。旧查询的十秒超时、1 MiB 限额与禁止重定向不再由 OMT 保证。
 
 ## 隔离方式
 
-[ai/conftest.py](../../../backend/tests/ai/conftest.py) 仅替换 DeepSeek 模块使用的 `init_chat_model`，返回 FakeListChatModel。测试仍经过真实的 Model、models_provider、deepseek_init，且使用无效的测试 Key，不读取认证文件、不调用网络。
-
-目录测试替换 DeepSeek 模块的 build_opener，返回内存字节流或受控异常，不请求用户 URL 或官方网络。新增提供商时为该提供商建立同类的初始化和 HTTP 替身，不以真实账户证明单元测试通过。
+- `ai/conftest.py` 的工厂 fixture 返回 FakeListChatModel，保留真实 Model/注册表/共用初始化链。目录测试仅替换 SDK 目录入口。
+- 协议测试使用实际安装的 ChatLiteLLM、LiteLLM，通过其 HTTPHandler/AsyncHTTPHandler 注入 httpx.MockTransport；同步和异步均关闭测试客户端，不连接任何服务。
+- ai 测试自动阻断 DNS 解析与 socket.connect，防止 SDK 客户端接缝升级后意外联网。Key 全为假值，不读取用户配置、不调用真实模型。
+- 流测试工具只操作内存，Skills 显式禁用，检查点使用 InMemorySaver；不写用户文件或数据库。
+- LiteLLM 默认使用包内能力/价格表，避免导入时下载远程表；用户显式环境配置不覆盖。
 
 ## 执行
 
 ```bash
 uv run pytest -q tests/ai --tb=no
+uv run pytest -q tests/core/test_bootstrap.py tests/core/test_reasoning.py tests/cli/test_login.py tests/cli/test_thinking.py tests/api/test_runtime_streaming.py --tb=no
+uv run pytest -q --tb=no
+basedpyright src/omt/ai/model.py src/omt/ai/models_manager.py src/omt/ai/litellm_backend.py tests/ai
 ```
 
 ## 覆盖限制
 
-- 不证明真实 DeepSeek 服务接受某个模型名或 effort，也不验证账单、速率限制、网络重试或输出质量。适配参考 [DeepSeek 思考模式协议](https://api-docs.deepseek.com/guides/thinking_mode/)；只有已知支持关闭的模型显式传 none 才构造关闭参数，旧/未知模型仍省略该参数，None 仍沿用服务端配置。
-- 本页主要覆盖 DeepSeek；厂商列表回归已更新为 DeepSeek/Ollama 两项，Ollama 专项见独立说明。其他提供商和 OAuth 未覆盖。
-- 会话如何从多个配置文件选择参数，由 [Session 与配置测试](session-and-config.md) 验证。
+- 不证明真实服务可达、Key 有效、返回的每个 ID 都能聊天/调用工具，或厂商接受任意 effort；不验证费用、质量、性能、速率限制和真实中断。
+- 十个注册项都验证共用参数路由；真实 SDK 的内存线协议主要验证 DeepSeek/Ollama，不能据此声称全部厂商已联调。
+- SDK 负责厂商协议、目录 HTTP 与内部缓存/回退；OMT 不重新实现这些逻辑。升级依赖后须重跑协议与上层回归。
+- langchain-litellm 固定兼容版本、LiteLLM 限定小版本；更新前需同时检查 MCP 依赖与 v3 流。上层配置/会话接口稳定不代表原生 SDK 专有选项均与新底座等价。

@@ -24,7 +24,7 @@ class ProviderConnection(BaseModel):
     """厂商连接；provider 来自注册表，只有要求认证的厂商才必须提供非空 api_key。
 
     免 Key 厂商会将兼容输入归一为 None，不存储或复用旧占位凭据。
-    地址由 ai/models/ 对应厂商模块维护，不再作为登录参数。
+    地址由模型注册表维护，不作为登录参数；能力由 LiteLLM 提供。
     """
 
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, hide_input_in_errors=True, extra="forbid")
@@ -122,7 +122,6 @@ class LoginResult:
 
 _DOCUMENT = TypeAdapter(dict[str, JsonValue])
 _AUTH = TypeAdapter(dict[str, AuthCredential])
-_CATALOG = TypeAdapter(dict[str, ProviderModels])
 _MODEL_NAMES = TypeAdapter(list[NonEmptyString], config=ConfigDict(hide_input_in_errors=True))
 
 
@@ -152,7 +151,7 @@ def _load_documents() -> _Documents:
     catalog = _read_document(directory / "model-store.json")
     try:
         return _Documents(selection, auth, catalog, _PartialSettings.model_validate(selection),
-                          _AUTH.validate_python(auth), _CATALOG.validate_python(catalog))
+                          _AUTH.validate_python(auth), settings.parse_model_store(catalog))
     except ValidationError:
         raise ValueError("已有模型配置字段无效，请修复后重试；不会自动覆盖。") from None
 
@@ -185,7 +184,7 @@ def check_model_configuration() -> ConfigurationStatus:
 
 
 async def discover_models(connection: ProviderConnection) -> list[str]:
-    """查询厂商完整目录；地址来自厂商模块，不保存文件或发送聊天请求。"""
+    """通过 LiteLLM 查询所选厂商目录；地址来自注册表，不保存文件或试运行模型。"""
     return await asyncio.to_thread(list_provider_models, provider=connection.provider, api_key=connection.api_key)
 
 
@@ -260,8 +259,9 @@ def save_model_login(login: ModelLogin, *, model_names: Sequence[str]) -> LoginR
     """自动合并完整厂商目录及认证，并把用户选择设为默认模型；不访问网络或终端。
 
     model_names 为本次取得的全部 ID（也可为离线缓存），选择必须在该列表中。
-    地址和已知思考能力来自厂商模块；仅补齐缺失/null 映射，已有映射（含空表）不覆盖。
-    同 ID 的额外元数据、其他厂商和未返回旧条目保留，不猜测未登记模型能力。
+    地址来自注册表；只保存连接信息，不持久化 SDK 的思考能力快照。
+    保存所选厂商目录时删除其废弃 thinkingLevelMap，其他元数据和未返回旧条目保留。
+    其他厂商不改写；普通读取不为清理旧字段产生写入。
     认证厂商共用一个 Key；免 Key 厂商不创建或修改 auth.json，保留已有认证原文。
     默认模型会更新，已有思考等级不变；不会在这里重建运行模型。
     JSON 逐文件原子替换，权限 0600；没有跨文件事务/跨进程锁，损坏文件不自动覆盖。
@@ -288,9 +288,7 @@ def save_model_login(login: ModelLogin, *, model_names: Sequence[str]) -> LoginR
         selected = next((entry for entry in provider_models if entry.id == name), None)
         if selected is not None and selected.provider not in (None, login.provider):
             raise ValueError("已有目录项的模型厂商不一致，请人工检查。")
-        mapping = adapter.thinking_level_maps.get(name)
-        definition = ModelDefinition(id=name, provider=login.provider, baseUrl=base_url,
-                                     thinkingLevelMap=dict(mapping) if mapping is not None else None)
+        definition = ModelDefinition(id=name, provider=login.provider, baseUrl=base_url)
         serialized = definition.model_dump(mode="json", exclude_none=True)
         if selected is None:
             entries.append(serialized)
@@ -298,8 +296,9 @@ def save_model_login(login: ModelLogin, *, model_names: Sequence[str]) -> LoginR
             entry = entries[provider_models.index(selected)]
             assert isinstance(entry, dict)
             entry.update({"id": name, "provider": login.provider, "baseUrl": str(base_url)})
-            if entry.get("thinkingLevelMap") is None and definition.thinkingLevelMap is not None:
-                entry["thinkingLevelMap"] = serialized["thinkingLevelMap"]
+    for entry in entries:
+        assert isinstance(entry, dict)
+        _ = entry.pop("thinkingLevelMap", None)
 
     documents.selection.update({"defaultProvider": login.provider, "defaultModel": login.model_name})
     _ = Settings.model_validate(documents.selection)

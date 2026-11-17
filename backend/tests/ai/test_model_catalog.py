@@ -1,92 +1,46 @@
-"""厂商目录适配只使用内存 HTTP 响应，验证用户地址路由、限制和失败清理。"""
+"""目录统一走 LiteLLM，不再访问 OMT 的厂商 HTTP 实现；使用 SDK 边界替身。"""
 
-import io
-from email.message import Message
-from http.client import IncompleteRead
-from typing import override
 from unittest.mock import Mock
-from urllib.error import HTTPError, URLError
 
 import pytest
-from pydantic import HttpUrl, SecretStr
+from pydantic import SecretStr
 
-from omt.ai.models import deepseek
-from omt.ai.models_manager import list_provider_models, supported_providers
+from omt.ai import litellm_backend
+from omt.ai.models_manager import list_provider_models, models, supported_providers
 
 
-@pytest.mark.parametrize("base_url", ["https://api.deepseek.com", "https://example.test/proxy/v1/"])
-def test_catalog_uses_provider_default_or_explicit_low_level_prefix(
-    monkeypatch: pytest.MonkeyPatch, base_url: str,
+@pytest.mark.parametrize("provider", supported_providers())
+def test_catalog_uses_litellm_and_preserves_raw_ids(provider: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    sdk = Mock(return_value=[f"{provider}/vendor/model:tag", " z-model ", "z-model", " "])
+    monkeypatch.setattr(litellm_backend.litellm, "get_valid_models", sdk)
+    key = SecretStr("fake-key") if models[provider].requires_api_key else None
+    assert list_provider_models(provider=provider, api_key=key) == ["vendor/model:tag", "z-model"]
+    sdk.assert_called_once_with(check_provider_endpoint=True, custom_llm_provider=provider,
+                                api_key="fake-key" if key else None, api_base=str(models[provider].base_url).rstrip("/"))
+
+
+@pytest.mark.parametrize("response", [[], ["", " "], ["deepseek/"], RuntimeError("fake-private-marker")])
+def test_empty_or_failed_catalog_is_a_safe_error(response: object, monkeypatch: pytest.MonkeyPatch) -> None:
+    sdk = Mock(side_effect=response) if isinstance(response, Exception) else Mock(return_value=response)
+    monkeypatch.setattr(litellm_backend.litellm, "get_valid_models", sdk)
+    with pytest.raises(ValueError, match="LiteLLM") as raised:
+        list_provider_models(provider="deepseek", api_key=SecretStr("fake-key"))
+    assert "fake-private-marker" not in str(raised.value)
+
+
+@pytest.mark.parametrize("provider,key", [("unknown", SecretStr("fake-key")), ("openai", None)])
+def test_catalog_rejects_invalid_connection_before_sdk(
+    provider: str, key: SecretStr | None, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    opener = Mock()
-    response = io.BytesIO(b'{"data":[{"id":"second"},{"id":"first"},{"id":"second"}]}')
-    opener.open.return_value = response
-    monkeypatch.setattr(deepseek, "build_opener", Mock(return_value=opener))
-    if base_url == "https://api.deepseek.com":
-        result = list_provider_models(provider="deepseek", api_key=SecretStr("fake-api-key"))
-    else:
-        result = deepseek.list_deepseek_models(api_key=SecretStr("fake-api-key"), base_url=HttpUrl(base_url))
-    assert result == ["first", "second"]
-    request = opener.open.call_args.args[0]
-    assert request.full_url == base_url.rstrip("/") + "/models"
-    assert request.get_header("Authorization") == "Bearer fake-api-key"
-    assert opener.open.call_args.kwargs["timeout"] == 10
-    assert response.closed
-    assert supported_providers() == ("deepseek", "ollama")
+    sdk = Mock()
+    monkeypatch.setattr(litellm_backend.litellm, "get_valid_models", sdk)
+    with pytest.raises(ValueError):
+        list_provider_models(provider=provider, api_key=key)
+    sdk.assert_not_called()
 
 
-@pytest.mark.parametrize("payload", [b'{"data":[]}', b'{"data":[{"id":42}]}',
-                                    b'fake-secret-marker', b'x' * (1024 * 1024 + 1)])
-def test_invalid_catalog_response_is_sanitized_and_closed(
-    payload: bytes, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    opener = Mock()
-    response = io.BytesIO(payload)
-    opener.open.return_value = response
-    monkeypatch.setattr(deepseek, "build_opener", Mock(return_value=opener))
-    with pytest.raises(ValueError) as raised:
-        _ = deepseek.list_deepseek_models(api_key=SecretStr("fake-secret-marker"), base_url=HttpUrl("https://example.test"))
-    assert "fake-secret-marker" not in str(raised.value)
-    assert response.closed
-
-
-@pytest.mark.parametrize("failure", ["http", "network", "read"])
-def test_catalog_errors_hide_details_and_close_http_resources(
-    monkeypatch: pytest.MonkeyPatch, failure: str,
-) -> None:
-    class BrokenResponse(io.BytesIO):
-        @override
-        def read(self, size: int | None = -1) -> bytes:
-            raise IncompleteRead(b"fake-secret-marker")
-
-    response = BrokenResponse() if failure == "read" else io.BytesIO(b"fake-secret-marker")
-    opener = Mock()
-    if failure == "http":
-        opener.open.side_effect = HTTPError("https://example.test/models", 401, "fake-secret-marker", Message(), response)
-    elif failure == "network":
-        opener.open.side_effect = URLError("fake-secret-marker")
-    else:
-        opener.open.return_value = response
-    builder = Mock(return_value=opener)
-    monkeypatch.setattr(deepseek, "build_opener", builder)
-    with pytest.raises(ValueError) as raised:
-        _ = deepseek.list_deepseek_models(api_key=SecretStr("fake-key"), base_url=HttpUrl("https://example.test"))
-    assert "fake-secret-marker" not in str(raised.value)
-    if failure != "network":
-        assert response.closed
-    handler = builder.call_args.args[0]
-    assert handler.redirect_request(Mock(), io.BytesIO(), 302, "redirect", {}, "https://other.test") is None
-
-
-@pytest.mark.parametrize("key", [None, "", " "])
-def test_cloud_catalog_still_requires_nonblank_key(key: str | None, monkeypatch: pytest.MonkeyPatch) -> None:
-    builder = Mock()
-    monkeypatch.setattr(deepseek, "build_opener", builder)
-    with pytest.raises(ValueError, match="API Key 不能为空"):
-        _ = list_provider_models(provider="deepseek", api_key=SecretStr(key) if key is not None else None)
-    builder.assert_not_called()
-
-
-def test_unregistered_provider_catalog_is_rejected() -> None:
-    with pytest.raises(ValueError, match="未注册"):
-        _ = list_provider_models(provider="unknown", api_key=SecretStr("fake-key"))
+def test_static_catalog_does_not_trigger_extra_official_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    """SDK 的静态回退也直接采用，不再补发旧 DeepSeek /models 请求。"""
+    sdk = Mock(return_value=["deepseek/deepseek-chat"])
+    monkeypatch.setattr(litellm_backend.litellm, "get_valid_models", sdk)
+    assert list_provider_models(provider="deepseek", api_key=SecretStr("not-a-validated-key")) == ["deepseek-chat"]

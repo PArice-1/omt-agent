@@ -31,3 +31,10 @@ test-results/
 
 /BACKLOG.md
 /DEVLOG.md
+
+# Agent benchmark runtime artifacts (do not hide knowledge_base snapshots)
+/benchmark/jobs/
+/benchmark
+
+/scripts/start-benchmark.sh
+/docs/omt/benchmark.md

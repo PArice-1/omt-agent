@@ -5,7 +5,7 @@ import json
 import sqlite3
 import subprocess
 import sys
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable, Iterator
 from contextlib import asynccontextmanager, closing
 from importlib import import_module
 from pathlib import Path
@@ -34,7 +34,10 @@ from omt.core.store import SessionStore
 
 
 @pytest.fixture
-def config_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def config_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sdk_reasoning: Callable[..., None],
+) -> Iterator[Path]:
+    sdk_reasoning("deepseek", "deepseek-chat", ("high",))
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("defaultProvider", raising=False)
     monkeypatch.delenv("defaultModel", raising=False)
@@ -52,7 +55,6 @@ def config_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     (directory / "model-store.json").write_text(json.dumps({
         "deepseek": {"models": [{
             "id": "deepseek-chat", "provider": "deepseek", "baseUrl": "https://example.test/v1",
-            "thinkingLevelMap": {"high": "high"},
         }]},
     }), encoding="utf-8")
     yield directory
@@ -62,7 +64,7 @@ def config_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 @pytest.fixture
 def model_factory(monkeypatch: pytest.MonkeyPatch) -> Mock:
     factory = Mock(return_value=FakeListChatModel(responses=["本地回复"]))
-    monkeypatch.setattr(import_module("omt.ai.models.deepseek"), "init_chat_model", factory)
+    monkeypatch.setattr(import_module("omt.ai.litellm_backend"), "initialize_litellm_model", factory)
     return factory
 
 
@@ -129,7 +131,7 @@ def test_cli_runs_manager_and_read_tool_without_network(
     assert "test-only-key" not in output
     model_factory.assert_called_once()
     assert model_factory.call_args.kwargs["reasoning_effort"] == "high"
-    assert model_factory.call_args.kwargs["extra_body"] == {"thinking": {"type": "enabled"}}
+    assert "extra_body" not in model_factory.call_args.kwargs  # 线协议映射交给 LiteLLM。
     assert len(model.seen_messages) == 3
     system_text = model.seen_messages[0][0].text
     assert system_text.startswith(load_system_prompt())

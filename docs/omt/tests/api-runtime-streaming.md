@@ -15,7 +15,7 @@
 | --- | --- | --- | --- |
 | 唯一 Runtime 工厂与关闭 | 配置就绪后通过 runtime_factory 注入真实 SessionRuntime，切换模型并继续已有会话，最后退出 lifespan | 工厂延迟且只进入一次；配置入口和切换可用、mutable=true、thinking 非空；下一轮使用新模型，退出清理继任 Manager | test_runtime_factory_supports_switching_and_closes_current_manager |
 | 请求借用的占位前保护 | 会话创建已取得 Manager，但在真实登记前等待 Event；参数化正常返回与取消 | running=0 时仍 busy=true，切等级返回 409；请求正常结束或取消后释放借用，随后切换成功 | test_request_lease_blocks_switch_before_manager_admission |
-| 首次完整配置 | 无配置无库；查状态/厂商/快捷列表，预览后先选非法模型再确认合法项 | 未确认不创建配置/数据库、不初始化 SDK；无配置时精确枚举 deepseek/ollama 且 logged_in 均 false，新增 requires_api_key 分别 true/false；非法选择 422；确认保存完整目录、初始化缺失库并立即可运行；确认响应、GET runtime 和快捷目录都按 none/low/high/max 返回可选等级；修复旧字母排序，与 CLI 一致；预览不可重复使用；响应不含 Key | test_first_configuration_is_preview_then_confirm_and_runs |
+| 首次完整配置 | 无配置无库；查状态/厂商/快捷列表，预览后先选非法模型再确认合法项 | 未确认不创建配置/数据库、不初始化 SDK；无配置时按注册表枚举全部开放厂商且 logged_in 均 false，requires_api_key 与声明一致（Ollama 为 false）；非法选择 422；确认保存完整目录、初始化缺失库并立即可运行；确认响应、GET runtime 和快捷目录都按 none/low/high/max 返回可选等级；修复旧字母排序，与 CLI 一致；预览不可重复使用；响应不含 Key | test_first_configuration_is_preview_then_confirm_and_runs |
 | Ollama 无 Key 配置、执行与重启 | 参数化 api_key 省略/null/空串/假占位值；真实 build_model，Ollama SDK 和目录替身；确认后 JSON 运行、切另一本地模型、SSE 运行、重建应用 | 服务返回免 Key 能力但不虚报登录；预览不落盘，兼容输入归一为 None；确认就绪，无 auth.json；全部已导入模型可切，临时选择不持久化，重启默认模型和完整四条历史保留，不回显占位 Key | test_ollama_configuration_without_key_runs_switches_and_restarts |
 | 本地服务不可用或没有模型 | 目录替身参数化抛假敏感标记/返回空列表，预览仅提交 provider=ollama | 安全 422 login_preview_failed，提示本地服务和模型，不索取 Key，不泄露标记，不创建配置或数据库 | test_ollama_preview_failure_reports_service_not_key |
 | 预览过期、限额及错误 | 限额 1、TTL 2 的临时配置；测试时钟推进；目录查询失败、空白 Key、额外地址字段 | 达上限 429；过期及重建应用后的旧 ID 404；网络/输入错误安全，不落盘、不泄露假秘密 | test_preview_limits_expiry_and_errors_do_not_persist |
