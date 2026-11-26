@@ -31,6 +31,15 @@ python3 -m unittest discover -s tests -v
 shellcheck -x -P SCRIPTDIR scripts/*.sh scripts/lib/common.sh
 ```
 
+## 本地评测入口
+
+在本地 `evals/` 工作区中，`main.py` 仅在显式传入 `--live` 时调用 OMT。入口测试以替身执行任务，验证参数传递、评分展示、报告保存和执行失败的退出码；HTTP 适配器测试另行验证会话创建与请求内容。两组测试均不启动真实后端，报告只写入测试创建的临时目录。
+
+```bash
+cd evals
+uv run --frozen --no-sync python -m pytest tests/test_main.py tests/test_omt_adapter.py -v
+```
+
 ## 限制
 
 替身不证明真实模型、Ollama 或用户配置可用；TCP 测试通过不等于真实 backend 联调。真实代理和 SSE 转发由 frontend 的 test:proxy 验证。脚本依赖 POSIX 进程组，不支持原生 Windows shell。
