@@ -16,6 +16,7 @@ dependencies = [
 
 [dependency-groups]
 eval = [
+    "jieba>=0.42.1,<0.43",
     "pyarrow>=18",
 ]
 

@@ -1,6 +1,6 @@
 # 检索评估
 
-提供数据读取、corpus 直接入库、批量检索评分，以及 JSON 明细和 Markdown 报告。自动测试使用 mock 向量和临时 Qdrant；真实检索成绩以本地运行生成的报告为准。
+提供数据读取、corpus 直接入库、批量检索评分、BM25 对照，以及 JSON 明细和 Markdown 报告。自动测试使用 mock 向量和临时 Qdrant；真实检索成绩以本地运行生成的报告为准。
 
 ## 目录
 
@@ -14,7 +14,9 @@ evals/
 ├── build_index.py         # 调用 src 的 Parquet 切分，再分批向量化入库
 ├── metrics.py             # 单题文档级指标
 ├── preview.py             # 数据预览命令
-├── run.py                 # 批量检索、单题评分、平均指标和报告
+├── run.py                 # 向量批量检索、单题评分、平均指标和报告
+├── bm25.py                # 中文分词、片段级 BM25 和确定性排序
+├── run_bm25.py            # 复用向量报告及快照，导出 BM25 对照结果
 ├── results/               # 保留真实运行的 JSON/Markdown 报告，用于展示
 └── README.md
 ```
@@ -161,6 +163,21 @@ uv run --group eval python -m evals.run --collection t2retrieval_chunked_smoke -
 没有满足条件的问题时，不调用模型，仍生成说明报告，指标为 `null` 而非 0；请扩大候选库或重新准备相关资料和干扰资料。单题搜索异常时保留问题 ID 和原始异常，不将失败题当成零分或生成完成报告。执行期间不要在其他进程修改同一数据库。
 
 缩小候选库及按标注筛选问题会改变评估难度，报告不能当作完整 T2Retrieval 官方基准成绩。运行需要 Ollama，仅生成查询向量，不重新生成资料向量或写入候选资料。
+
+## BM25 对照与导出
+
+不需要 Ollama 或原始 Parquet，直接复用已有向量报告中的全部问题、正相关 ID 和对应快照中的全部片段，保持相同 K、fetch_k 与评分口径：
+
+```bash
+uv run --group eval python -m evals.run_bm25 \
+  --baseline-report evals/results/report-20261107T082120064449Z.json \
+  --db-path evals/data/storage \
+  --output evals/results/my-bm25-comparison.json
+```
+
+同时生成 JSON 明细和同名 Markdown 对照表，拒绝覆盖已有文件；不指定 `--output` 时按时间命名。数据库只在临时副本打开，原快照不改写；复制期间原库必须无其他写入。默认 `--k1 1.2 --b 0.75`，采用 jieba 中文分词，索引在内存中构建。向量结果取自历史报告，本次不请求模型或比较耗时。
+
+已运行的结果见 [BM25 与向量对照报告](results/bm25-vs-vector.md)及[完整 JSON](results/bm25-vs-vector.json)。算法、参数、校验、隔离和测试场景统一见[评估专题](../../docs/knowledge_base/evaluation.md#bm25-与已有向量结果对照)。
 
 ## 单题评分
 
