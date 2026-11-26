@@ -48,7 +48,11 @@ queries + qrels   → 完整资料覆盖筛选 → KnowledgeBase 搜索
                   → 原始文档 ID 去重 → 指标均值 → JSON/Markdown 报告
 ```
 
-`evals/build_index.py` 与 `evals/run.py` 分别负责评估入库和批量检索，不把数据集标注规则放入 `src`。查询不按标准答案 ID 过滤，资料向量不会在每次查询时重新构建。仓库保留 `evals/results/` 的真实报告和 `evals/data/storage/` 的本地数据库展示快照，原始 Parquet 不提交。详见[检索评估](evaluation.md)。
+`evals/build_index.py` 与 `evals/run.py` 分别负责评估入库和批量检索，不把数据集标注规则放入 `src`。查询不按标准答案 ID 过滤，资料向量不会在每次查询时重新构建。
+
+`evals/bm25.py` 提供中文分词、片段级 BM25 倒排索引和排序；`evals/run_bm25.py` 复用向量报告中的全部已评问题及正相关 ID，在对应 Qdrant 快照的临时副本中读取全部候选片段，保持相同片段预算、文档去重和评分口径，导出 BM25/历史向量对照。此流程不请求 embedding，不要求原始 Parquet，不改动 MCP 的子串关键词搜索。
+
+仓库保留 `evals/results/` 的真实报告和 `evals/data/storage/` 的本地数据库展示快照，原始 Parquet 不提交。详见[检索评估](evaluation.md)。
 
 ## 模块职责
 

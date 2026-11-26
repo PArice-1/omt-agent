@@ -88,6 +88,7 @@ uv run rag-mcp --build-on-start --source /path/to/docs /path/to/notes.md \
 
 - [评估报告（Markdown）](evals/results/report-20261107T082120064449Z.md)：平均指标和单题指标。
 - [完整结果（JSON）](evals/results/report-20261107T082120064449Z.json)：配置、标准资料、片段/文档排名和单题评分。
+- [BM25 与向量对照报告](evals/results/bm25-vs-vector.md)：同一候选库和 203 道问题的真实 BM25 结果；[运行与导出](evals/README.md#bm25-对照与导出)无需 Ollama 或原始 Parquet。
 - [结果范围与解释](evals/results/README.md) · [Qdrant 数据库快照](evals/data/storage/README.md)。
 
 | 已保存示例 | 数值 |

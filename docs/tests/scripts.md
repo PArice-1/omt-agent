@@ -40,6 +40,16 @@ cd evals
 uv run --frozen --no-sync python -m pytest tests/test_main.py tests/test_omt_adapter.py -v
 ```
 
+## 知识库 BM25 评估入口
+
+`knowledge_base/evals/run_bm25.py` 提供 `python -m evals.run_bm25`：显式指定向量 JSON 报告，读取对应静止 Qdrant 快照的临时副本，复用问题及全部正相关 ID，导出新的 JSON/Markdown 对照报告。不会调用模型、改写原数据库或覆盖旧报告；K 和片段预算继承基线。此入口不属于需要 `--live` 的 OMT 评测。
+
+`knowledge_base/evals/tests/test_bm25.py` 使用临时测试数据库和固定排名验证实际 BM25 检索、参数传递、评分/导出、源数据库不变及失败保护。默认测试不访问已保存的展示快照。详细场景见[知识库评估说明](../knowledge_base/evaluation.md#自动测试)。
+
+```bash
+uv run --frozen --no-sync --directory knowledge_base --group eval python -m unittest evals.tests.test_bm25 -v
+```
+
 ## 限制
 
 替身不证明真实模型、Ollama 或用户配置可用；TCP 测试通过不等于真实 backend 联调。真实代理和 SSE 转发由 frontend 的 test:proxy 验证。脚本依赖 POSIX 进程组，不支持原生 Windows shell。
