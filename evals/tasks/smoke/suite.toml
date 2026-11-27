@@ -1,0 +1,2 @@
+# 仅对整个 smoke Experiment 汇总；逐条评分器由任务 JSON 指定。
+summary_evaluators = ["completion_rate"]

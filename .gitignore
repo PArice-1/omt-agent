@@ -38,5 +38,3 @@ test-results/
 
 /scripts/start-benchmark.sh
 /docs/omt/benchmark.md
-
-/evals

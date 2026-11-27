@@ -31,13 +31,15 @@ python3 -m unittest discover -s tests -v
 shellcheck -x -P SCRIPTDIR scripts/*.sh scripts/lib/common.sh
 ```
 
-## 本地评测入口
+## OMT 评测注册与执行入口
 
-在本地 `evals/` 工作区中，`main.py` 仅在显式传入 `--live` 时调用 OMT。入口测试以替身执行任务，验证参数传递、评分展示、报告保存和执行失败的退出码；HTTP 适配器测试另行验证会话创建与请求内容。两组测试均不启动真实后端，报告只写入测试创建的临时目录。
+`evals/register_datasets.py` 按 suite 查找、创建或复用 LangSmith Dataset；`evals/main.py` 只评测已注册的样例，且调用真实 OMT 需要显式传入 `--live`。两者分别运行，详见 [评测说明](../evals.md)。
+
+测试用内存 Dataset 验证单任务对象和任务数组、重复注册、追加、冲突保护及显式更新评分名单。用真实 LangSmith 异步 runner 验证同一 suite 内不同样例选择不同评分器、trial 并发上限和逐条/汇总反馈；用协程同步点验证同一 trial 内两个评分器确实并发且失败互不影响。命令行报告只写临时目录，HTTP 适配器用传输替身验证独立会话和原始回答。整个测试套件不访问真实网络或用户工作区。
 
 ```bash
 cd evals
-uv run --frozen --no-sync python -m pytest tests/test_main.py tests/test_omt_adapter.py -v
+uv run --frozen --no-sync python -m pytest tests -q
 ```
 
 ## 知识库 BM25 评估入口
