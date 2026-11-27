@@ -5,7 +5,7 @@ from collections.abc import Callable, Iterator
 import json
 from importlib import import_module
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
@@ -269,6 +269,28 @@ def test_get_agent_uses_underlying_chat_model_and_builtin_tools(
     client = _get_model(load_settings())
 
     agent = asyncio.run(_get_agent(client))
+
+    assert isinstance(agent, Agent)
+    assert agent.model is client.model
+    assert agent.tools is not None
+    assert {getattr(item, "name", None) for item in agent.tools} == {"read", "edit", "write", "bash"}
+
+
+def test_get_agent_keeps_builtin_tools_when_mcp_is_unavailable(
+    config_dir: Path, model_factory: Mock, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """经真实 MCP 发现入口模拟插件未启动，Agent 仍应提供全部内置工具。"""
+    monkeypatch.setattr(
+        "langchain_mcp_adapters.client.load_mcp_tools",
+        AsyncMock(side_effect=ConnectionError("测试 MCP 未启动")),
+    )
+    assert config_dir.is_dir()
+    client = _get_model(load_settings())
+    model_factory.assert_called_once()
+
+    agent = asyncio.run(_get_agent(client, servers={
+        "offline": {"transport": "stdio", "command": "test-only-offline", "args": []},
+    }))
 
     assert isinstance(agent, Agent)
     assert agent.model is client.model

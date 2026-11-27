@@ -4,8 +4,8 @@
 
 ## 对象与目的
 
-- 源码：[settings.py](../../../backend/src/omt/core/settings.py)、[bootstrap.py](../../../backend/src/omt/core/bootstrap.py)。
-- 测试：[test_settings.py](../../../backend/tests/core/test_settings.py)、[test_configuration_files.py](../../../backend/tests/core/test_configuration_files.py)、[test_bootstrap.py](../../../backend/tests/core/test_bootstrap.py)。
+- 源码：[settings.py](../../../backend/src/omt/core/settings.py)、[bootstrap.py](../../../backend/src/omt/core/bootstrap.py)、[mcp.py](../../../backend/src/omt/core/mcp.py)。
+- 测试：[test_mcp.py](../../../backend/tests/core/test_mcp.py)、[test_settings.py](../../../backend/tests/core/test_settings.py)、[test_configuration_files.py](../../../backend/tests/core/test_configuration_files.py)、[test_bootstrap.py](../../../backend/tests/core/test_bootstrap.py)。
 - 防止选错模型或 URL、将 OAuth 当 Key、配置报错泄露凭据，以及测试误读用户配置。
 
 原 test_session.py 的模型解析和 Agent 组装用例迁入 test_bootstrap.py，直接测试共用 build_model/build_agent，不再经已删除的 CLI 私有别名。交互、输入、信号与完整组装链路迁入 [CLI 测试](cli.md)，恢复迁入 [/resume 测试](resume.md)。这不是删除旧行为覆盖：低层模型断言保留；旧失败后直接重试契约按 Manager 的保守策略替换。
@@ -41,7 +41,10 @@
 | 目录快照匹配 | 显式传入 definition，ID 或 provider 与设置不同 | 初始化前拒绝，SDK 不调用；不能为保持展示快照而绕过模型选择约束 | test_get_model_rejects_mismatched_definition_snapshot |
 | 隔离模型快照 | 显式 definition/credentials，删除配置；空认证与本次 effort 覆盖 | 复用连接/认证快照、SDK 能力，不读用户文件；空认证不回退文件，覆盖值不持久化 | test_build_model_from_explicit_snapshot_does_not_read_configuration_files、test_explicit_empty_credentials_do_not_fall_back_to_saved_auth |
 | 只读模型预检 | 合法三份临时配置，SDK 工厂为替身 | resolve_model_parameters 返回受 SecretStr 保护的参数，不构造客户端、不发送模型请求 | test_resolve_model_parameters_checks_auth_without_constructing_client |
-| Agent 组装 | Model 包装对象与内置工具，MCP 发现返回空列表的异步替身 | 等待异步 build_agent，传入 client.model，工具集合包含全部静态注册项 | test_get_agent_uses_underlying_chat_model_and_builtin_tools |
+| Agent 组装 | Model 包装对象与内置工具，不传 MCP 配置 | 等待异步 build_agent，传入 client.model，工具集合包含全部静态注册项 | test_get_agent_uses_underlying_chat_model_and_builtin_tools |
+| MCP 不可用时组装 | 真实 build_agent → MCP 发现入口，底层加载替身抛连接错误 | Agent 仍创建成功、保留原模型和全部内置工具 | test_get_agent_keeps_builtin_tools_when_mcp_is_unavailable |
+| MCP 部分或全部失败 | 两个服务分别返回工具，或抛连接、超时、命令缺失、普通异常组 | 仅跳过失败服务；其他工具按配置顺序保留且可调用，全失败返回空列表；日志不含模拟敏感异常原文 | test_mcp.py：test_discovery_keeps_healthy_tools_when_servers_fail |
+| MCP 空配置与取消 | 空映射，或工具加载抛 CancelledError | 空配置不加载；取消继续传播，不伪装成插件不可用 | test_mcp.py：test_empty_servers_return_no_tools、test_discovery_does_not_swallow_cancellation |
 
 需求调整：目录和能力分离，旧 high→max 等本地映射全部失效。测试用 SDK 元数据替身声明有效等级；未知能力仅回退 none，不阻断模型。连接、认证、JSON 语法错误的严格校验保持不变。手动导入但 SDK 未收录的模型通过真实 build_model→Model 链和本地 FakeListChatModel 调用验证，见 test_off_catalog_model_remains_callable_without_sdk_capability_metadata。
 
@@ -51,16 +54,16 @@
 
 [core/conftest.py](../../../backend/tests/core/conftest.py) 同时隔离 settings.root 与 cwd，前后清空 load_settings 缓存。所有 JSON 均写在 tmp_path，使用保留域名与假 Key，不输出真实认证文件。
 
-模型组装只替换共用 initialize_litellm_model 端点，保留从 build_model → Model → 注册入口的调用链；返回 FakeListChatModel，不发网络请求。Agent 用真实内置工具定义，默认不传 MCP 配置，不启动 MCP。配置解析错误仅包含测试假标记，用于检验完整格式化异常也不泄密。
+模型组装只替换共用 initialize_litellm_model 端点，保留从 build_model → Model → 注册入口的调用链；返回 FakeListChatModel，不发网络请求。Agent 用真实内置工具定义，默认不传 MCP 配置，不启动 MCP。MCP 用例保留真实 MultiServerMCPClient，替换底层 load_mcp_tools 返回离线工具或抛出指定异常，不启动外部命令、不访问网络。配置解析错误仅包含测试假标记，用于检验完整格式化异常也不泄密。
 
 不能只切换 cwd：settings.root 在模块导入时就已固定；新增配置测试必须使用共享 fixture 或显式隔离该值并清缓存。
 
 ## 执行
 
 ```bash
-uv run pytest -q tests/core/test_settings.py tests/core/test_configuration_files.py tests/core/test_bootstrap.py --tb=no
+uv run pytest -q tests/core/test_settings.py tests/core/test_configuration_files.py tests/core/test_bootstrap.py tests/core/test_mcp.py --tb=no
 uv run pytest -q tests/cli tests/api --tb=no
-basedpyright --pythonpath .venv/bin/python src/omt/core/bootstrap.py src/omt/core/configuration.py tests/core/test_bootstrap.py
+basedpyright --pythonpath .venv/bin/python src/omt/core/bootstrap.py src/omt/core/configuration.py src/omt/core/mcp.py tests/core/test_bootstrap.py tests/core/test_mcp.py
 ```
 
 ## 覆盖限制

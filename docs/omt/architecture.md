@@ -63,7 +63,7 @@ omt 和模块入口均调用 omt.cli.app:main；默认或 --tui 调用 OmtApp.ru
 
 CLI 和 HTTP 默认都通过 `bootstrap.open_session_runtime(options)`，由 SessionRuntime 持有可替换的 Manager。HTTP 外层 ApiRuntime 管理未配置/未就绪状态、限时限量的内存配置预览和请求借用计数；只在显式确认首次配置后调用 initialize_session_database。两者共用配置解析、预建索引校验、提示词、模型与 Agent 组装：
 1. 确认配置工作目录是实际 cwd，且数据库文件和 sessions 表预先存在；不会 chdir、建索引表或迁移。
-2. 读取包内基础提示词，再解析模型设置/认证/目录，组装模型、内置工具和选定的 MCP。
+2. 读取包内基础提示词，再解析模型设置/认证/目录，组装模型、内置工具和选定的 MCP。MCP 按服务独立并发发现；初始化或发现失败只记录不含异常原文的警告并跳过该服务，不阻止 CLI/API 运行环境启动，也不影响其他可用工具。取消仍正常传播；MCP 配置格式校验及模型、数据库错误不在此降级范围。
 3. 持有一个 AsyncSqliteSaver，创建 Store 与 Manager。
 4. 退出先关闭当前 Manager，取消并等待活跃历史/运行操作，再关闭 Saver 连接。
 
