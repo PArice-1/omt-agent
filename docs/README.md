@@ -14,5 +14,6 @@
 | 知识库构建与检索 | [知识库架构](knowledge_base/architecture.md) |
 | 后端测试及隔离要求 | [后端测试索引](omt/tests/README.md) |
 | 启动与安装脚本测试 | [脚本测试](tests/scripts.md) |
+| 用 LangSmith 评测 OMT、注册 suite 与查看报告 | [OMT 评测](evals.md) |
 
 各模块 README 保留使用说明；架构、接口与专题文档统一在本目录维护。已有专题中的 uv/npm 命令按对应模块目录执行，根目录命令见开发说明。

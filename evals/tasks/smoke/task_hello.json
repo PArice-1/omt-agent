@@ -1,0 +1,6 @@
+{
+    "id": "hello",
+    "instruction": "请只输出 hello, 不要添加其他文字",
+    "expected_output": "hello",
+    "evaluators": ["exact_match"]
+}
