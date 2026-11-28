@@ -31,6 +31,29 @@ python3 -m unittest discover -s tests -v
 shellcheck -x -P SCRIPTDIR scripts/*.sh scripts/lib/common.sh
 ```
 
+## Docker 测试入口
+
+根目录的 [compose.yaml](../../compose.yaml) 和 [Dockerfile](../../Dockerfile) 提供独立 Linux 测试环境。Docker 构建会拉取基础镜像及锁定依赖，不纳入默认离线套件。请在空闲 3000 端口、可信的开发机器上用独立项目名验证：
+
+```bash
+docker compose -p omt-compose-check config --quiet
+docker compose -p omt-compose-check up --build -d --wait
+curl -fsS http://127.0.0.1:3000/api/omt/health
+curl -fsS http://127.0.0.1:3000/api/omt/runtime
+docker compose -p omt-compose-check exec -T backend sh -ec 'test "$(id -u)" -ne 0; test "$PWD" = /sandbox/workspace; touch .compose-check'
+```
+
+如果开发机本身已安装前端依赖和 Playwright Chromium，可在停止测试容器前，从仓库根目录运行真实浏览器检查：
+
+```bash
+node frontend/tests/integration/compose-connect.mjs
+docker compose -p omt-compose-check down -v
+```
+
+[浏览器检查](../../frontend/tests/integration/compose-connect.mjs)在 `127.0.0.1` 和 `localhost` 分别点击「未连接」→「连接本机后端」，断言尚未配置模型时仍能连接，且不请求会话。默认使用宿主机端口 3000；若验证实例改用了其他端口，可传入端口号。未运行浏览器检查也应执行上面的清理命令。
+
+预期健康响应为 `{"status":"ok"}`，新的命名卷里运行状态为未配置；后端非 root 且能够写入独立工作目录。只有回环 3000 对宿主机发布，8000 仅在共享的容器网络内使用。此过程不读写真实 `~/.omt`、不执行用户代码或调用模型。清理只删除这次测试项目的卷，不应使用已有数据的项目名。首次保存模型、真实凭据与聊天不在此冒烟测试内。
+
 ## OMT 评测注册与执行入口
 
 `evals/register_datasets.py` 按 suite 查找、创建或复用 LangSmith Dataset；`evals/main.py` 只评测已注册的样例，且调用真实 OMT 需要显式传入 `--live`。两者分别运行，详见 [评测说明](../evals.md)。

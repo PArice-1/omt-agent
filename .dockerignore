@@ -1,0 +1,29 @@
+# 只发送镜像所需的源码和锁文件，不发送宿主机的安装结果、Git、配置或测试数据。
+*
+!backend/
+backend/*
+!backend/pyproject.toml
+!backend/uv.lock
+!backend/README.md
+!backend/src/
+!frontend/
+frontend/*
+!frontend/package.json
+!frontend/package-lock.json
+!frontend/next.config.ts
+!frontend/next-env.d.ts
+!frontend/postcss.config.mjs
+!frontend/tsconfig.json
+!frontend/src/
+# Next.js 构建会检查镜像中的 TypeScript；测试和测试夹具留在宿主机。
+frontend/src/**/*.test.ts
+frontend/src/**/*.test.tsx
+
+**/.env
+**/.env.*
+**/.omt
+**/.omt/**
+**/auth.json
+**/model-store.json
+**/__pycache__
+**/*.pyc
