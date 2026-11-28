@@ -71,9 +71,9 @@ GET /api/omt/runtime
 | `message` | 安全状态提示，不含底层异常原文 |
 | `usage` | 新会话用量基线与当前模型窗口；用于连接、配置确认及模型切换后的立即对齐，不是所有会话的累计账单 |
 
-`thinking.level` 是请求等级，reasoning_effort 是由 SDK 能力解析后的值：支持时同名透传，否则 none 回退，不再使用磁盘 high→max 映射。UI 必须提示回退，不能把请求等级当实际能力；none 是应用默认项，不保证服务端关闭推理。
+`thinking.level` 是请求等级，reasoning_effort 是由后端模型能力解析后的值：支持时同名透传，否则 none 回退，不再使用磁盘 high→max 映射。UI 必须提示回退，不能把请求等级当实际能力；none 是应用默认项，不保证服务端关闭推理。
 
-`available_levels` 保留服务端顺序：none 在首，其余来自 LiteLLM 元数据（含 minimal/xhigh），未声明的不补造。未知能力与明确无推理能力都可能只返回 none，但前者并不表示模型不支持推理；不增加响应字段或改变 HTTP/SSE 契约。运行状态、快捷列表及流快照共用相同能力源，**前端不要重排**。下面具名模型与数组是协议示例，不是每个 SDK 版本的能力保证；实际以返回值为准。
+`available_levels` 保留服务端顺序：none 在首，其余以 LiteLLM 元数据为主（含 minimal/xhigh）；`deepseek-v4-flash` 和 `deepseek-flash` 在 SDK 缺档位时按官方协议补齐 `low/high/max`，并支持关闭思考。未知能力不补造。未知能力与明确无推理能力都可能只返回 none，但前者并不表示模型不支持推理；不增加响应字段或改变 HTTP/SSE 契约。运行状态、快捷列表及流快照共用相同能力源，**前端不要重排**。下面具名模型与数组是协议示例，不是每个 SDK 版本的能力保证；实际以返回值为准。
 
 ### Token 消耗与上下文快照
 
@@ -133,7 +133,7 @@ interface UsageSnapshot extends TokenCounts {
 {"provider":"deepseek","model":"deepseek-v4-pro"}
 ```
 
-200 返回完整 RuntimeResponse。必须来自本地快捷目录，不接受任意地址或未导入模型。切换时重读所选目录和凭据，保留请求等级；SDK 未声明时按 none 回退。
+200 返回完整 RuntimeResponse。必须来自本地快捷目录，不接受任意地址或未导入模型。切换时重读所选目录和凭据，保留请求等级；所选模型不提供该等级时按 none 回退。
 
 ### PUT /api/omt/runtime/thinking
 

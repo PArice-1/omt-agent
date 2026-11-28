@@ -15,12 +15,19 @@ from langchain_litellm import ChatLiteLLM
 from litellm.router_utils.reasoning_effort_capability import resolve_supported_reasoning_efforts
 
 
+# DeepSeek Flash 的新旧 ID 使用同一协议。LiteLLM 1.105.7 只标注 supports_reasoning，
+# 且会把开启档位折叠成 thinking=enabled；升级后需重新检查能力元数据和出站请求。
+# https://api-docs.deepseek.com/guides/thinking_mode/
+_DEEPSEEK_FLASH_MODELS = frozenset(("deepseek-flash", "deepseek-v4-flash"))
+_DEEPSEEK_FLASH_EFFORTS = ("none", "low", "high", "max")
+
+
 @dataclass(frozen=True)
 class ModelCapabilities:
-    """SDK 本地能力快照；None 表示未知，空等级元组表示明确没有可用 effort。
+    """本地能力快照；None 表示未知，空等级元组表示明确没有可用 effort。
 
     available_levels 保留上层约定的 none 回退项；它不代表服务一定支持关闭推理。
-    其他等级完全来自 SDK，既不猜测三档，也不读取 model-store.json 的旧映射。
+    等级优先取 SDK 元数据，兼容补齐仅限已知协议的 DeepSeek Flash，不读取旧模型目录映射。
     """
 
     supports_reasoning: bool | None
@@ -38,7 +45,8 @@ def get_model_capabilities(*, provider: str, model: str) -> ModelCapabilities:
     优先匹配带厂商的键；裸键仅在所属厂商匹配时使用，避免同名模型串用能力。
     等级解析复用当前固定版本 LiteLLM 的内部解析器，升级依赖须重跑能力测试。
     不调用可能触发 Ollama /api/show 等网络请求的通用 get_model_info。
-    无条目或等级不全时保留未知，不阻止已配置模型继续调用，也不回退到本地厂商表。
+    DeepSeek Flash 的 SDK 条目确认支持推理但未声明具体档位时，用官方档位补齐；
+    其余情况保留 SDK 的已知/未知状态，不阻止已配置模型继续调用。
     """
     route = "ollama_chat" if provider == "ollama" else provider
     for key in dict.fromkeys((f"{provider}/{model}", f"{route}/{model}", model)):
@@ -48,6 +56,8 @@ def get_model_capabilities(*, provider: str, model: str) -> ModelCapabilities:
         info = {**entry, "key": key}
         efforts = resolve_supported_reasoning_efforts(info, deployment_is_mapped=True)
         supported = entry.get("supports_reasoning")
+        if efforts is None and supported is True and provider == "deepseek" and model in _DEEPSEEK_FLASH_MODELS:
+            efforts = _DEEPSEEK_FLASH_EFFORTS
         if not isinstance(supported, bool):
             supported = bool(efforts) if efforts is not None else None
         return ModelCapabilities(supported, efforts)
@@ -85,9 +95,9 @@ def initialize_litellm_model(
     """创建可交给现有 Agent 的模型，构造时不发送聊天请求。
 
     provider 为 LiteLLM 路由名，model 保留厂商原始 ID（包括斜杠和 Ollama 标签）；
-    base_url 为已选目录中的可信服务地址。reasoning_effort 的开启等级原样交给 SDK，
-    none 仅在 SDK 明确声明支持关闭时传入；不在 OMT 中重写各厂商 thinking 协议。其他调用选项放入 model_kwargs，
-    由 LiteLLM 判断适用性；默认不重试，防止桥接与 SDK 多层重试叠加。
+    base_url 为已选目录中的可信服务地址。reasoning_effort 的开启等级交给 SDK，
+    none 只对明确支持关闭的模型传入。DeepSeek Flash 另通过 extra_body 保留 SDK 丢弃的强度，
+    思考开关仍由 SDK 转换。其他调用选项放入 model_kwargs；默认不重试，防止多层重试叠加。
     """
     if not model.strip():
         raise ValueError("模型名称不能为空")
@@ -97,12 +107,19 @@ def initialize_litellm_model(
     # Ollama 的 chat 路由使用 /api/chat 并支持工具，不使用文本 completion 路由。
     route = "ollama_chat" if provider == "ollama" else provider
     # none 是上层的默认回退值；支持 reasoning_effort 参数不等于接受 none。
-    # 仅 SDK 明确给出关闭等级时发送，否则省略以沿用服务默认；显式开启仍交由 SDK 校验。
+    # 仅明确支持关闭时发送 none，否则省略以沿用服务默认；开启仍交由 SDK 校验。
     if reasoning_effort is not None and (
         reasoning_effort != "none"
         or "none" in (get_model_capabilities(provider=provider, model=model).reasoning_efforts or ())
     ):
         parameters["reasoning_effort"] = reasoning_effort
+        if (provider == "deepseek" and model in _DEEPSEEK_FLASH_MODELS
+                and reasoning_effort != "none" and reasoning_effort in _DEEPSEEK_FLASH_EFFORTS):
+            # extra_body 在 SDK 转换后合入请求；保留调用方扩展字段，不原地修改。
+            extra_body = parameters.get("extra_body")
+            if extra_body is not None and not isinstance(extra_body, dict):
+                raise ValueError("extra_body 必须是字典")
+            parameters["extra_body"] = {**(extra_body or {}), "reasoning_effort": reasoning_effort}
     return ChatLiteLLM(
         model=model,
         custom_llm_provider=route,

@@ -24,6 +24,7 @@
 | 查询中的预览也限额 | 第一请求在本地 Event 等待，再申请第二份；取消第一请求 | 第二请求立即 429；取消释放名额，之后预览成功，始终未保存 | test_inflight_previews_are_limited_and_cancellation_releases_slot |
 | 保存与启用分别报告 | 首次确认保存后 SDK 构建抛含假秘密的异常 | 200，configuration_saved=true、runtime_ready=false、error 非空；磁盘默认可读，服务保留配置入口，错误不含秘密 | test_confirmation_reports_saved_but_not_enabled |
 | 快速切换和思考控制 | 完成一轮后设 high、换到不支持 high 的模型，继续原会话；再让构建失败 | 请求 high 保留、实际 none；主动 unknown 等级 422；下一轮新模型收到完整历史，仅一条索引；所有 JSON 字节不变；构建失败 502，原运行模型保持 | test_quick_switch_and_thinking_preserve_history_and_configuration |
+| Flash 真实思考档位 | 临时配置旧 ID `deepseek-v4-flash`，保留真实 SDK 能力和模型构造，只请求运行配置接口 | 运行状态和快捷目录显示 none/low/high/max，可选 max 且实际值为 max；未支持的 medium 返回 422，不发起模型请求 | test_deepseek_v4_flash_can_select_max_with_real_sdk_metadata |
 | 重启不记住临时选择 | 临时选择 high 和另一模型，关闭后重建应用 | 读取原磁盘默认模型、等级 none，不把进程选择伪装成持久化 | test_restart_uses_saved_defaults_not_temporary_selection |
 | 切换取消与并发保护 | 新 Agent 构建等待 Event，同时请求新会话和另一次切换，再取消构建请求 | 状态 changing=true；两个操作 409；取消后原模型、Manager 和状态保持可用，能完成正常一轮 | test_switch_cancellation_blocks_new_work_and_keeps_old_runtime |
 | reasoning、并行同名工具及历史 | 两次助手消息含标准 reasoning 内容块，调用同名工具两次；重建应用查询 | 原始 SSE 帧不含 version 字段，seq 递增、run/session 一致；OpenAPI 正确声明 SSE 及安全 422 错误结构；正文/reasoning 分开；工具按不同调用 ID 关联；流中助手 ID 与历史一致；成功终态只含最终答案；SQLite 重开后完整历史及 reasoning 保留 | test_stream_protocol_reasoning_tool_links_and_restart_history |

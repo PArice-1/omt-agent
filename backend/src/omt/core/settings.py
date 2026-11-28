@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     defaultModel: NonEmptyString = Field(description="默认模型标识，与模型目录中的 id 一致")
     defaultThinkingLevel: NonEmptyString | None = Field(
         default=None,
-        description="可选思考等级；未配置时按 none 回退，其他等级必须由 LiteLLM 声明支持",
+        description="可选思考等级；未配置时按 none 回退，其他等级必须是当前模型的可选等级",
     )
 
 
@@ -52,7 +52,7 @@ class ModelDefinition(BaseModel):
 
     @property
     def available_thinking_levels(self) -> tuple[str, ...]:
-        """从 SDK 本地数据派生等级；不联网、不修改模型目录或猜造未知能力。
+        """由模型底座本地解析等级；不联网、不修改模型目录或猜造未知能力。
 
         目录解析会补齐缺失的 provider；独立且未标明厂商的定义只提供 none 回退项。
         """

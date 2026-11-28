@@ -21,10 +21,11 @@
 | 运行时类型校验 | provider/model 非字符串、FTP 地址、错误 Key/effort 类型 | 注册回调拒绝，不初始化 SDK | test_models_manager.py：test_registered_initializer_validates_types_before_sdk |
 | 免 Key 与参数副作用 | Ollama 输入旧假 Key、none、num_ctx | 不向底座传旧 Key，保留其他选项，原字典不变 | test_models_manager.py：test_ollama_discards_compatibility_key_and_does_not_mutate_options |
 | DeepSeek 同步/异步协议 | 测试元数据显式声明 none/high；真实 SDK、MockTransport 与代理前缀 | none/high 分别转换 disabled/enabled；保留路径、正文、reasoning 和 usage；不声称 SDK 包内已给 DeepSeek 完整档位 | test_litellm_backend.py：test_deepseek_uses_litellm_translation_and_preserves_reasoning |
+| DeepSeek Flash 思考档位 | 真实安装的 SDK，不注入模型能力；Flash 两种 ID，经同步/异步 MockTransport 调用 | 档位为 none/low/high/max；none 发送关闭开关，其他三个档位同时发送开启开关和精确强度；扩展字段不丢，无模型 ID 改写 | test_model_capabilities.py：test_deepseek_flash_exposes_documented_thinking_levels；test_litellm_backend.py：test_deepseek_flash_sends_selected_thinking_level |
 | SDK 认证失败 | MockTransport 返回 HTTP 401 | 同步/异步继续传播 AuthenticationError，不返回假答案，不重复请求 | test_litellm_backend.py：test_sdk_authentication_failure_propagates_without_fake_answer |
-| 原有上层流与工具循环 | 真实 Model → Agent → Conversation；SSE 返回 reasoning 与分片工具参数 | 同步/异步都只执行一次工具，结果带原调用 ID 回传；正文/reasoning 事件不重复、不混入答案；检查点恢复后保留完整历史 | test_litellm_stream.py：test_existing_conversation_interface_stream_tools_and_resume |
+| 原有上层流与工具循环 | 真实 Model → Agent → Conversation；DeepSeek Chat 或选 max 的 Flash；SSE 返回 reasoning 与分片工具参数 | 同步/异步都只执行一次工具，结果带原调用 ID 回传；正文/reasoning 分开；恢复后保留完整历史；Flash 的流请求、工具回传与恢复后请求都保留 max | test_litellm_stream.py：test_existing_conversation_interface_stream_tools_and_resume |
 
-Ollama 同步/异步协议专项见 [Ollama 测试](ollama.md)。SDK 能力的登录、组装和运行切换见 [组装测试](session-and-config.md)、[登录测试](model-login.md)、[推理测试](thinking.md)。这些测试仅注入 SDK 元数据，不再通过本地目录映射指定能力。
+Ollama 同步/异步协议专项见 [Ollama 测试](ollama.md)。SDK 能力的登录、组装和运行切换见 [组装测试](session-and-config.md)、[登录测试](model-login.md)、[推理测试](thinking.md)。通用流程测试用临时 SDK 元数据指定档位，不使用旧目录映射；Flash 专项直接使用真实安装包的数据。
 
 ## SDK 本地思考能力
 
@@ -32,7 +33,7 @@ Ollama 同步/异步协议专项见 [Ollama 测试](ollama.md)。SDK 能力的�
 
 [test_model_capabilities.py](../../../backend/tests/ai/test_model_capabilities.py) 使用真实固定版本的数据验证 gpt-5 的 minimal/low/medium/high，以及 gpt-5.1 的 none/low/medium/high；同时用临时 model_cost 条目验证多厂商、非连续档位不补 medium、未知与明确不支持分离、裸模型名不跨厂商串用。所有路径被 ai 的 DNS/socket 防护约束，不调用 get_model_info 或 Ollama /api/show。
 
-SDK 等级解析依赖内部 resolve_supported_reasoning_efforts，升级依赖须重跑此专项。上层测试显式申请根 tests/conftest.py 的 sdk_reasoning fixture，只替换测试模型元数据，非 autouse，不污染真实 SDK 专项。none 是应用回退项，只有 SDK 明确声明才作为关闭参数发送。
+SDK 等级解析依赖内部 resolve_supported_reasoning_efforts，升级依赖须重跑此专项。上层测试显式申请根 tests/conftest.py 的 sdk_reasoning fixture，只替换测试模型元数据，非 autouse，不污染真实 SDK 专项。none 是应用回退项，只有明确支持关闭才作为关闭参数发送。Flash 专项同时防止 SDK 缺档造成仅有 none，以及 SDK 只发送开关却丢掉强度；升级依赖后需分别复测这两个问题。`test_deepseek_flash_thinking_fallback_respects_sdk_and_provider` 验证底座不覆盖 SDK 已声明或明确不支持的等级，也不跨厂商或模型补齐。
 
 ## 厂商模型目录查询
 
@@ -68,5 +69,5 @@ basedpyright src/omt/ai/model.py src/omt/ai/models_manager.py src/omt/ai/litellm
 
 - 不证明真实服务可达、Key 有效、返回的每个 ID 都能聊天/调用工具，或厂商接受任意 effort；不验证费用、质量、性能、速率限制和真实中断。
 - 十个注册项都验证共用参数路由；真实 SDK 的内存线协议主要验证 DeepSeek/Ollama，不能据此声称全部厂商已联调。
-- SDK 负责厂商协议、目录 HTTP 与内部缓存/回退；OMT 不重新实现这些逻辑。升级依赖后须重跑协议与上层回归。
+- SDK 负责厂商协议、目录 HTTP 与内部缓存/回退；Flash 兼容仅通过 `extra_body` 补充强度，不接管传输。升级依赖后须重跑协议与上层回归。
 - langchain-litellm 固定兼容版本、LiteLLM 限定小版本；更新前需同时检查 MCP 依赖与 v3 流。上层配置/会话接口稳定不代表原生 SDK 专有选项均与新底座等价。

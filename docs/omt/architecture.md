@@ -68,7 +68,7 @@ CLI 和 HTTP 默认都通过 `bootstrap.open_session_runtime(options)`，由 Ses
 3. 持有一个 AsyncSqliteSaver，创建 Store 与 Manager。
 4. 退出先关闭当前 Manager，取消并等待活跃历史/运行操作，再关闭 Saver 连接。
 
-共用 SessionRuntime 提供只读 `manager`/`thinking`/`changing` 和异步 `set_thinking_level(level)`、`set_model(provider, model_name)`。前者结合当前连接快照与 SDK 能力解析等级；后者显式重读所选模型定义和认证，保留请求思考等级，SDK 未声明等级时实际按 none。两者共用重建链：初始化 Model、创建 Agent，再调用旧 Manager.rebuild(agent) 创建继任 Manager；全部成功后才发布新 Manager、设置和目录快照。构建失败/取消保持旧实例及状态；不请求模型试运行，Runtime 自身不写配置。MCP 工具复用启动发现结果，整个生命周期复用同一个 Saver。HTTP 的模型/思考设置也是进程级且不持久化；与 CLI 一样重建时保留历史和失败保护。HTTP 主动提交不可选等级时拒绝，切模型继承旧等级时允许回退。ApiRuntime 在切换前检查会话忙碌及请求借用计数，切换期间拒绝新会话操作，防止请求尚未进入 Manager 占位就被交接。HTTP 只提供 create_app(runtime_factory=...) 一个注入入口，工厂返回 SessionRuntime 的异步上下文；会话操作始终使用其中的当前 Manager，不再提供绕过 Runtime 的固定 Manager 模式。
+共用 SessionRuntime 提供只读 `manager`/`thinking`/`changing` 和异步 `set_thinking_level(level)`、`set_model(provider, model_name)`。前者结合当前连接快照与模型能力解析等级；后者显式重读所选模型定义和认证，保留请求思考等级，当前模型不提供该等级时实际按 none。两者共用重建链：初始化 Model、创建 Agent，再调用旧 Manager.rebuild(agent) 创建继任 Manager；全部成功后才发布新 Manager、设置和目录快照。构建失败/取消保持旧实例及状态；不请求模型试运行，Runtime 自身不写配置。MCP 工具复用启动发现结果，整个生命周期复用同一个 Saver。HTTP 的模型/思考设置也是进程级且不持久化；与 CLI 一样重建时保留历史和失败保护。HTTP 主动提交不可选等级时拒绝，切模型继承旧等级时允许回退。ApiRuntime 在切换前检查会话忙碌及请求借用计数，切换期间拒绝新会话操作，防止请求尚未进入 Manager 占位就被交接。HTTP 只提供 create_app(runtime_factory=...) 一个注入入口，工厂返回 SessionRuntime 的异步上下文；会话操作始终使用其中的当前 Manager，不再提供绕过 Runtime 的固定 Manager 模式。
 
 `run_cli(manager_factory=...)` 和 `OmtApp(runtime_factory=...)` 可注入固定 Manager，此时不读取额外模型配置，不支持运行中切换；也可注入提供 SessionRuntime 的异步工厂。调用方应每次通过 runtime.manager 取得最新实例，不再使用切换前的引用。
 
@@ -95,7 +95,7 @@ SessionSettings 共享 db_path、workspace_path、max_concurrent_runs、skill_ro
 - 首条普通请求才调用 Manager.create_session，以原文前 10 字符为标题。仅看列表、退出或输入 Ctrl-C 不登记空会话。登记失败不执行模型，下一次输入可重试；首轮开始后即使失败/取消也保留索引。
 - /resume 调用 Manager.list_sessions，只显示当前工作目录的记录。0 固定为当前选择；尚未登记时显示“新对话”和启动 UTC 时间。其他编号沿用 Store 修改时间排序，标题折为单行。
 - /resume N 只使用最近展示的编号映射，调用 Manager.open_session 复查归属、加载历史并刷新修改时间。成功后才替换 CLI 当前选择、展示历史与警告，并清空旧编号；失败保持旧选择，删除/移出目录的记录使旧映射失效。
-- 启动和 /thinking 展示请求等级、实际 effort 与SDK 声明的可选等级（始终包含 none）；/thinking <level> 修改当前进程后续轮次使用的强度。SDK 未声明等级时按 none 并提示，不把请求等级误当成实际 effort。命令不登记会话；重建不丢失当前选择、编号和历史，不绕过失败保护。
+- 启动和 /thinking 展示请求等级、实际 effort 与可选等级（始终包含 none）；/thinking <level> 修改当前进程后续轮次使用的强度。不提供该等级时按 none 并提示，不把请求等级误当成实际 effort。命令不登记会话；重建不丢失当前选择、编号和历史，不绕过失败保护。
 - 普通请求调用 Manager.run(..., event_handler=terminal.print_event)。最终回答已通过事件输出，入口不再次打印 answer；成功轮次由 Manager 刷新 updated_at。
 - 模型/工具失败后允许输入其他命令，但同一会话会被 Manager 标为需恢复，不能盲目重跑；可选择其他会话或退出检查。不再沿用旧 CLI 的失败后直接追加策略。
 - Ctrl-C 在输入与执行阶段均退出整个 CLI。执行时沿用 asyncio.run 默认 SIGINT 取消，Conversation 通过流上下文清理底层执行，Manager 先于 Saver 关闭。main 只捕获 KeyboardInterrupt；外部任务取消向上传播，不伪装成正常退出。同步工具线程、外部进程和已经发生的副作用不保证立即停止或撤销。
@@ -128,7 +128,7 @@ HTTP 显式创建即登记，允许空会话；历史响应投影用户/助手/�
 ~/.omt/agent/model-store.json
 ```
 
-模型登录分三层：CLI/TUI 只展示厂商、隐藏 Key 和模型选择；`core/model_configuration.py` 负责凭据复用、目录缓存及确认后保存；`ai/models_manager.py` 用 `ModelProvider(initialize, list_models, base_url, requires_api_key)` 声明开放厂商。调用和目录统一交给 `ai/litellm_backend.py`，不维护厂商 HTTP 或静态等级表。默认开放 anthropic、deepseek、gemini、groq、mistral、moonshot、ollama、openai、openrouter、together_ai、xai，可增删 `_PROVIDER_URLS`。Ollama 免 Key；其他条目要求 API Key。思考能力由 LiteLLM 提供，不再作为 ModelProvider 配置项。
+模型登录分三层：CLI/TUI 只展示厂商、隐藏 Key 和模型选择；`core/model_configuration.py` 负责凭据复用、目录缓存及确认后保存；`ai/models_manager.py` 用 `ModelProvider(initialize, list_models, base_url, requires_api_key)` 声明开放厂商。调用和目录统一交给 `ai/litellm_backend.py`，不维护厂商 HTTP 层。默认开放 anthropic、deepseek、gemini、groq、mistral、moonshot、ollama、openai、openrouter、together_ai、xai，可增删 `_PROVIDER_URLS`。Ollama 免 Key；其他条目要求 API Key。思考能力在 LiteLLM 底座统一解析，不作为 ModelProvider 配置项。
 
 Moonshot 默认连接国内开放平台 https://api.moonshot.cn/v1，Key 必须与站点匹配，不自动跨站重试。旧 model-store.json 中的地址不会在普通启动时自动迁移；重新登录并确认选择后，完整返回目录内的模型地址才按当前注册表更新。
 
@@ -140,7 +140,7 @@ Moonshot 默认连接国内开放平台 https://api.moonshot.cn/v1，Key 必须�
 
 仓库内同名的 `agent/` 文件不是当前默认配置来源。切换工作目录或在导入后修改 HOME，不会自动重定位已计算的 `settings.root`。
 
-- `load_settings()` 缓存默认厂商、模型和可选 defaultThinkingLevel；cache_clear() 主动重载。未配置等级按应用 none 回退，显式等级必须由 SDK 声明支持，不再按本地映射改成另一强度。
+- `load_settings()` 缓存默认厂商、模型和可选 defaultThinkingLevel；cache_clear() 主动重载。未配置等级按应用 none 回退，显式等级必须是当前模型的可选等级，不再按本地映射改成另一强度。
 - `load_auth()` 不缓存；按 provider 保存认证类型及可选的 `SecretStr` Key。加载错误不回显文件原文。
 - `load_model_store()` 不缓存，只读取模型 ID、可信 baseUrl 和可选 provider，校验 URL/ID 唯一性。文件是已导入目录与连接信息，不是能力数据库。ModelDefinition.available_thinking_levels 和运行状态共用 SDK 本地能力解析；SDK 数据改变后重新读取/重建即可生效，不必重写 model-store.json。
 - 文件采用严格 JSON。旧 thinkingLevelMap（包括旧格式错误值）不再参与能力或连接校验；其他能力/价格字段仍可保留，但不驱动初始化。文件名为 model-store.json。
@@ -154,7 +154,7 @@ Moonshot 默认连接国内开放平台 https://api.moonshot.cn/v1，Key 必须�
 3. 默认模型与该 provider 的 `models[].id` 精确匹配，不猜别名、不取列表第一项。
 4. 模型定义若声明 provider，必须与所选 provider 一致。
 
-思考能力不是初始化前提：SDK 未收录模型或未声明具体等级时，只保留应用 none 回退项，仍可调用已手动导入的模型，不受 SDK 静态目录限制。默认/未知等级解析为 reasoning_effort="none"；SDK 明确支持的等级原样使用，不做 high→max 等本地转换。
+思考能力不是初始化前提：本地解析无法确定具体等级时，只保留应用 none 回退项，仍可调用已手动导入的模型，不受 SDK 静态目录限制。默认/未知等级解析为 reasoning_effort="none"；已支持的等级原样使用，不做 high→max 等本地转换。
 
 `bootstrap.resolve_model_parameters` 只读校验目录、凭据和 SDK 本地能力，不构造模型或联网。build_model 再通过原 Model 接缝传 provider、精确 ID、HttpUrl、SecretStr 和 reasoning_effort。显式 definition/credentials 快照继续支持隔离运行，空认证不回退用户文件；可选 reasoning_effort 只覆盖当前构造，不写配置。CLI/API 无 OAuth 或缺 Key 时的环境变量回退。
 
@@ -182,12 +182,12 @@ Moonshot 默认连接国内开放平台 https://api.moonshot.cn/v1，Key 必须�
 
 get_model_capabilities(provider, model) 只查 LiteLLM 的 model_cost 元数据，不调用可能联网的 get_model_info。优先匹配厂商前缀键，裸键必须属于同一厂商，避免同名模型串用能力。具体等级复用 SDK 内部 resolve_supported_reasoning_efforts；该依赖集中在统一底座并由固定版本测试保护。
 
-返回值保留三态：明确等级元组、明确不支持的空元组、信息不足的 None；supports_reasoning 与具体等级分开，不把未知当成不支持。展示保留 SDK 顺序（含 minimal、xhigh 等）并将应用 none 放首位，不猜造低中高三档。当前包内数据中 gpt-5/gpt-5.1 可提供具体等级，而部分 DeepSeek/Gemini/o 系列虽支持推理仍缺完整等级；不再使用旧 DeepSeek 表补齐。
+返回值保留三态：明确等级元组、明确不支持的空元组、信息不足的 None；supports_reasoning 与具体等级分开，不把未知当成不支持。展示保留 SDK 顺序（含 minimal、xhigh 等）并将应用 none 放首位，不猜造低中高三档。当模型是 DeepSeek 厂商下的 `deepseek-v4-flash` 或 `deepseek-flash`，且 SDK 确认支持推理但未列档位时，用 [DeepSeek 官方档位](https://api-docs.deepseek.com/guides/thinking_mode/)补齐 `none/low/high/max`。明确的 SDK 档位或“不支持”优先；不读取旧思考映射，不外推到其他模型或厂商。
 
 默认能力表随 LiteLLM 依赖更新，/login 只刷新目录，不使 SDK 未知能力自动变成已知。升级后需重启进程；本轮读取能力不下载远程能力表、不请求模型服务。
 `Model(provider, model=..., base_url=..., **kwargs)` 构造时立即经原有 `_init_model()` / `models_provider()` 接缝创建可直接交给 Agent 的 `BaseChatModel`；传给 Agent 的仍是 **`client.model`**。默认实现统一为 `langchain_litellm.ChatLiteLLM`，模型 ID 原样保留，显式传 `custom_llm_provider`、`api_base` 和适用的 Key。地址去掉末尾斜杠，避免 SDK 拼接出双斜杠路径；其他选项放入 model_kwargs，默认桥接重试数为 0。不读取配置、不请求目录、不发送试运行聊天请求。没有 `OMT_AI_BACKEND` 开关、原生后端或旧接口回退。
 
-上层 reasoning_effort 与可选等级字段不变。开启等级交给 LiteLLM 转换；none 是应用默认项，不保证关闭推理。仅当 SDK 明确列出 none 时发送关闭值，否则省略参数使用服务默认；仅支持 reasoning_effort 参数不能证明支持 none。厂商协议全部由 SDK 解释。
+上层 reasoning_effort 与可选等级字段不变。`none` 是应用默认项；仅在明确支持关闭时发送关闭值，否则省略该参数。LiteLLM 1.105.7 对 DeepSeek Flash 只生成思考开关，因此底座用 SDK 的 `extra_body` 保留 `low/high/max`，`none` 仍由 LiteLLM 转为 `thinking.type=disabled`。HTTP 传输、工具和响应转换仍由 SDK 负责。升级 SDK 时分别验证档位数据和最终请求，再决定是否移除兼容逻辑。
 
 Ollama 在调用侧显式选择 LiteLLM 的 `ollama_chat` 路由，使用原生 /api/chat，而非 OpenAI /v1；目录侧用 `ollama`。注册层丢弃兼容 Key，上层免 Key 登录、保存、重启与切换行为不变。HTTP `/providers` 的 `requires_api_key`、`logged_in` 和全部配置/会话/流字段保持不变；前端仍按 requires_api_key && !logged_in 决定是否收集 Key。工具绑定、同步/异步流、reasoning、工具结果回传与历史恢复通过真实桥接配内存传输验证，见 [统一模型测试](tests/ai-models.md) 和 [Ollama 测试](tests/ollama.md)。
 

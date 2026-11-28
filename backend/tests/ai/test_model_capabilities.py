@@ -1,4 +1,6 @@
-"""只读真实 LiteLLM 元数据，验证多厂商等级、未知能力及无网络约束。"""
+"""用 LiteLLM 本地元数据验证多厂商等级、Flash 兼容及未知能力。"""
+
+from collections.abc import Callable
 
 import pytest
 
@@ -16,6 +18,29 @@ def test_bundled_sdk_models_supply_actual_levels(model: str, expected: tuple[str
     assert capabilities.supports_reasoning is True
     assert capabilities.reasoning_efforts == expected
     assert capabilities.available_levels == ("none", *(level for level in expected if level != "none"))
+
+
+@pytest.mark.parametrize("model", ["deepseek-v4-flash", "deepseek-flash"])
+def test_deepseek_flash_exposes_documented_thinking_levels(model: str) -> None:
+    """真实 SDK 数据下，旧 ID 和现用 ID 都必须提供 DeepSeek 公布的有效档位。"""
+    capabilities = get_model_capabilities(provider="deepseek", model=model)
+    assert capabilities.supports_reasoning is True
+    assert capabilities.available_levels == ("none", "low", "high", "max")
+
+
+@pytest.mark.parametrize(("provider", "model", "declared", "expected"), [
+    ("deepseek", "deepseek-v4-flash", ("high",), ("none", "high")),
+    ("deepseek", "deepseek-v4-flash", (), ("none",)),
+    ("deepseek", "test-flash", None, ("none",)),
+    ("openrouter", "deepseek-v4-flash", None, ("none",)),
+])
+def test_deepseek_flash_thinking_fallback_respects_sdk_and_provider(
+    provider: str, model: str, declared: tuple[str, ...] | None, expected: tuple[str, ...],
+    sdk_reasoning: Callable[[str, str, tuple[str, ...] | None], None],
+) -> None:
+    """不覆盖 SDK 的明确声明，也不把兼容档位推广到不同模型或厂商。"""
+    sdk_reasoning(provider, model, declared)
+    assert get_model_capabilities(provider=provider, model=model).available_levels == expected
 
 
 @pytest.mark.parametrize("provider", ["deepseek", "gemini", "anthropic", "ollama"])

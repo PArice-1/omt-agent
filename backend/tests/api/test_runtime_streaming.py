@@ -445,6 +445,27 @@ def test_quick_switch_and_thinking_preserve_history_and_configuration(
         assert client.get("/api/omt/runtime").json()["thinking"]["model"] == "test-plain"
 
 
+def test_deepseek_v4_flash_can_select_max_with_real_sdk_metadata(config: ApiSettings) -> None:
+    """旧 Flash ID 不使用 SDK 元数据替身；网页读取与切换档位都不发起模型请求。"""
+    model = "deepseek-v4-flash"
+    model_configuration.save_model_login(
+        model_configuration.ModelLogin(provider="deepseek", api_key=SecretStr(KEY), model_name=model),
+        model_names=[model],
+    )
+    initialize_session_database(config.db_path)
+    with TestClient(create_app(config)) as client:
+        state = RuntimeResponse.model_validate_json(client.get("/api/omt/runtime").content).thinking
+        assert state is not None and state.available_levels == ["none", "low", "high", "max"]
+        assert client.get("/api/omt/models").json() == [
+            {"provider": "deepseek", "model": model, "available_levels": state.available_levels, "current": True},
+        ]
+        selected = client.put("/api/omt/runtime/thinking", json={"level": "max"})
+        assert selected.status_code == 200
+        thinking = RuntimeResponse.model_validate_json(selected.content).thinking
+        assert thinking is not None and thinking.level == thinking.reasoning_effort == "max"
+        assert client.put("/api/omt/runtime/thinking", json={"level": "medium"}).status_code == 422
+
+
 def test_restart_uses_saved_defaults_not_temporary_selection(config: ApiSettings, sdk: list[RecordingModel]) -> None:
     seed(config)
     with TestClient(create_app(config)) as client:
