@@ -28,6 +28,30 @@
 
 CLI/API 的 cwd 保持为调用命令时所在目录。要操作其他项目，先切换目录，再使用脚本绝对路径；不要用 cd 到 backend 作为安装定位方式。已有会话仍只在原工作目录下列出。
 
+## Docker Linux 测试环境
+
+需要 Linux Docker Engine 和 Docker Compose 插件（支持 `up --wait`）；不需要在宿主机运行 `setup.sh`。镜像构建时编译 Next.js，启动时用 `next start`，不依赖浏览器的热更新连接；修改源码后需要重建镜像。此配置仅供可信本机测试。在仓库根目录执行：
+
+```bash
+docker compose up --build -d --wait
+```
+
+打开 [http://127.0.0.1:3000](http://127.0.0.1:3000)，点击右上角「未连接」→「连接本机后端」，再从左侧「添加模型」配置。连接不需要 API Key；容器健康也不会替你连接网页。可进入后端的 Debian Linux 容器操作独立工作目录：
+
+```bash
+docker compose exec backend bash
+```
+
+Web 将宿主机的 3000 映射到容器的 3000，只绑定回环地址；API 的 8000 不发布。两种服务共享一个网络命名空间，前端仍通过回环地址转发到 API。远程 Linux 测试机上可保持这个绑定，在自己的终端运行 `ssh -N -L 127.0.0.1:3000:127.0.0.1:3000 user@服务器`，再用浏览器打开本机地址；不要将未鉴权的服务暴露到公网。若宿主机 3000 已占用，应先释放该端口。
+
+Agent 在 `/sandbox/workspace` 执行，容器内 `~/.omt` 和工作目录共用 Compose 项目自己的命名卷，不挂载宿主机目录或 Docker socket。后端以非 root 用户运行，根文件系统只读，`/sandbox` 和临时目录可写。容器默认可出网，不是用于执行不可信代码的强隔离环境；测试不要使用生产凭据。此配置不启动 Ollama 或知识库；容器内的 localhost 不指向宿主机。
+
+```bash
+docker compose logs -f       # 查看日志
+docker compose down          # 停止，保留命名卷以便下次继续
+docker compose down -v       # 删除本 Compose 项目的卷；会删除测试凭据、历史和工作文件
+```
+
 ## 本机生产模式
 
 两个终端分别运行，端口及 OMT_BACKEND_URL 保持一致：

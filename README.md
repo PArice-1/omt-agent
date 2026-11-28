@@ -34,6 +34,10 @@ CLI 与 API 保留调用者的工作目录；会话按工作目录归属，文�
 
 Web 脚本管理本次创建的两个进程组，Ctrl+C 一起退出；已有端口被占用时停止并提示，不接管已有服务。完整启动、生产模式及失败处理见 [快速开始](docs/quickstart.md)。
 
+## Docker 测试
+
+在装有 Docker Compose 的 Linux 机器上运行 `docker compose up --build -d --wait`，打开 http://127.0.0.1:3000。容器使用独立数据卷，不读取宿主机配置；远程访问和清理见 [Docker Linux 测试环境](docs/quickstart.md#docker-linux-测试环境)。
+
 ## 可选知识库
 
 默认不安装、不启用知识库，backend 可独立运行。插件需要时再安装与配置：

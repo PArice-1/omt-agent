@@ -1,0 +1,50 @@
+services:
+  backend:
+    build:
+      context: .
+      target: backend
+    init: true
+    # Web 共享 backend 的网络命名空间，所以端口映射写在这里；8000 不发布。
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - sandbox:/sandbox
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      # 未配置模型也能通过存活检查，首次初始化从 Web 页面完成。
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/health', timeout=3).close()"]
+      interval: 5s
+      timeout: 4s
+      retries: 12
+      start_period: 10s
+
+  web:
+    build:
+      context: .
+      target: web
+    init: true
+    # 复用现有 Next.js 回环代理规则，不修改上游地址白名单。
+    network_mode: service:backend
+    depends_on:
+      backend:
+        condition: service_healthy
+        restart: true
+    environment:
+      OMT_BACKEND_URL: http://127.0.0.1:8000
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/omt/health').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"]
+      interval: 5s
+      timeout: 4s
+      retries: 12
+      start_period: 20s
+
+volumes:
+  sandbox:
