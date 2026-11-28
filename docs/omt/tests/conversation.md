@@ -86,6 +86,8 @@ Conversation 接收现成 Agent、可选 config、基础提示词、Skills 搜�
 
 ## 结构化事件与静默执行
 
+`usage.updated` 在每次模型完成后投影会话累计和最近请求占用，纯工具请求也统计；异常/取消保留已知累计下界。直接 Conversation 与 Manager 共用统计，Manager 在接纳前额外通知历史基线供 Adapter 对齐。统计不重建/替换消息，不改变失败保护；见[Token 用量专项](usage.md)。
+
 events.py 仅定义 RunEvent 和 EventHandler；Conversation 的 event_handler 默认 None，诊断也通过 skills.diagnostic 发送。显式传收集器可观察事件，显式安装 CLI 渲染器才输出。load_history 不再有 display 参数，也不自动打印；这是移除旧模块后的 Python 接口调整，不提供旧包装层。
 
 | 场景 | 输入 / 前置条件 | 预期结果 | 对应测试 |

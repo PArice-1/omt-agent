@@ -4,6 +4,7 @@ import type { OmtClient, TerminalEvent } from "@/lib/omt-api/contracts";
 import { isTerminal } from "@/lib/omt-api/events";
 import { RuntimeController } from "@/features/runtime/controller";
 import { applyRunEvent } from "./stream-state";
+import { usageFromHistory } from "./usage";
 import { ApiError, classifyRunError, errorMessage, isConnectionFailure, readErrorMessage } from "@/lib/omt-api/errors";
 import { validateMessage } from "./format";
 import type { RunState, WorkspaceState } from "./types";
@@ -170,7 +171,7 @@ export class WorkspaceController {
         });
         if (!this.isCurrent(generation)) return;
         const run = this.state.runs[id];
-        const updated = run?.phase === "completed" ? { ...run, message: undefined, answer: undefined, items: undefined }
+        const updated = run?.phase === "completed" ? { ...run, message: undefined, answer: undefined, items: undefined, usage: usageFromHistory(history) }
           : run?.phase === "unknown" ? { ...run, reviewed: true } : undefined;
         // Replace history and remove completed temporary output atomically so
         // subscribers can never observe a duplicate final answer in between.
@@ -239,7 +240,8 @@ export class WorkspaceController {
     // Set the lock synchronously, before any await (including a double click in one render).
     const aborter = new AbortController();
     this.aborters.set(id, aborter);
-    this.setRun(id, { phase: "sending", message, receiving: true, items: [] });
+    this.setRun(id, { phase: "sending", message, receiving: true, items: [],
+      usage: run?.usage ?? usageFromHistory(this.state.histories[id].messages) });
     let terminal: TerminalEvent | undefined;
     try {
       const result = await this.observeRequest(() => this.client.streamRun(id, message, (event) => {
@@ -247,6 +249,7 @@ export class WorkspaceController {
         const current = this.state.runs[id];
         if (event.session_id !== id || (current.runId && current.runId !== event.run_id))
           throw new ApiError(200, "invalid_response", "流式事件不属于本轮请求，结果未确认。");
+        if (event.type === "run.started") this.runtime.alignRun(event.data.thinking, event.data.usage);
         this.setRun(id, applyRunEvent(current, event));
         if (isTerminal(event)) terminal = event;
       }, aborter.signal), generation);
@@ -263,6 +266,8 @@ export class WorkspaceController {
         // JSON errors before admission can be rejections. After run.started,
         // transport/protocol errors never prove that execution stopped.
         this.setRun(id, { ...current, phase: current.runId ? "unknown" : classifyRunError(error),
+          usage: current.runId && current.usage ? { ...current.usage, usage_complete: false, context_tokens: null,
+            context_used_percent: null, context_remaining_tokens: null } : current.usage,
           error: stopped ? "已停止接收，正在尝试终止。结果未确认；工具可能仍在执行，副作用不会自动回滚。" : errorMessage(error),
           runId: current.runId ?? (error instanceof ApiError ? error.runId : undefined), reviewed: false });
       }

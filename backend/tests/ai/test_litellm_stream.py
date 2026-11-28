@@ -15,6 +15,7 @@ from omt.agent.agent import Agent
 from omt.ai.model import Model
 from omt.core.conversation import Conversation
 from omt.core.events import RunEvent
+from omt.core.usage import UsageSnapshot, usage_from_messages
 from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler, HTTPHandler
 
 
@@ -37,6 +38,7 @@ def test_existing_conversation_interface_stream_tools_and_resume(asynchronous: b
         requests.append(body)
         assert request.url.path == "/v1/chat/completions" and body["stream"] is True
         assert body["tools"][0]["function"]["name"] == "double"
+        assert body["stream_options"]["include_usage"] is True
         if len(requests) == 1:
             deltas = [
                 {"role": "assistant", "reasoning_content": "先"},
@@ -54,6 +56,10 @@ def test_existing_conversation_interface_stream_tools_and_resume(asynchronous: b
                   for delta in deltas]
         frames.append({"id": f"reply-{len(requests)}", "object": "chat.completion.chunk", "created": 1,
                        "model": "deepseek-chat", "choices": [{"index": 0, "delta": {}, "finish_reason": finish}]})
+        frames.append({"id": f"reply-{len(requests)}", "object": "chat.completion.chunk", "created": 1,
+                       "model": "deepseek-chat", "choices": [],
+                       "usage": {"prompt_tokens": 100 * len(requests), "completion_tokens": 20,
+                                 "total_tokens": 100 * len(requests) + 20}})
         sse = "".join(f"data: {json.dumps(frame, ensure_ascii=False)}\n\n" for frame in frames) + "data: [DONE]\n\n"
         return httpx.Response(200, content=sse.encode(), headers={"content-type": "text/event-stream"})
 
@@ -88,6 +94,11 @@ def test_existing_conversation_interface_stream_tools_and_resume(asynchronous: b
             assert len(final.messages) == 4
             assert final.run("再确认") == "结果是8"
     assert executions == [4] and len(requests) == 3
+    reports = [event.data for event in received if event.kind == "usage.updated"]
+    assert all(isinstance(report, UsageSnapshot) for report in reports)
+    assert [report.total_tokens for report in reports if isinstance(report, UsageSnapshot)] == [120, 340]
+    summary = usage_from_messages(final.messages)
+    assert summary.total_tokens == 660 and summary.context_tokens == 320 and summary.usage_complete
     assert [message.type for message in final.messages] == ["human", "ai", "tool", "ai", "human", "ai"]
     assert isinstance(final.messages[1], AIMessage) and final.messages[1].tool_calls[0]["args"] == {"value": 4}
     assert isinstance(final.messages[2], ToolMessage) and final.messages[2].tool_call_id == "call-test"

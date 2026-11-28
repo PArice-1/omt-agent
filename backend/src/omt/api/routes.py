@@ -34,11 +34,16 @@ def session_routes(
         return project_history(await manager.get_history(session_id))
 
     @router.post("/{session_id}/runs")
-    async def run(session_id: str, body: RunRequest, manager: Annotated[SessionManager, Depends(get_manager)]) -> RunResponse:
+    async def run(
+        session_id: str, body: RunRequest, manager: Annotated[SessionManager, Depends(get_manager)],
+        runtime: Annotated[ApiRuntime, Depends(get_runtime)],
+    ) -> RunResponse:
+        """非流式也返回相同的会话用量快照，窗口取本次借用的运行配置。"""
+        window = runtime.usage().context_window
         result = await manager.run(session_id, body.message)
         return RunResponse(
             session_id=result.session_id, run_id=result.run_id, answer=result.answer,
-            warnings=list(result.warnings),
+            warnings=list(result.warnings), usage=result.usage.with_window(window),
         )
 
     @router.post("/{session_id}/runs/stream", response_class=RunStreamingResponse, status_code=200,
@@ -48,7 +53,7 @@ def session_routes(
         manager: Annotated[SessionManager, Depends(get_manager)],
         runtime: Annotated[ApiRuntime, Depends(get_runtime)],
     ) -> RunStreamingResponse:
-        stream = RunStream(manager, session_id, body.message, runtime.options, runtime.thinking())
+        stream = RunStream(manager, session_id, body.message, runtime.options, runtime.thinking(), runtime.usage().context_window)
         await stream.start()
         return RunStreamingResponse(stream)
 

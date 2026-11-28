@@ -10,6 +10,8 @@
 
 ## 场景
 
+消息结束后新增 `usage.updated`，原正文/reasoning 顺序与 ID 不变；模型未报告 usage 时通知未知而非精确零。对应顺序断言同步维护，用量完整测试见[Token 用量专项](usage.md)。
+
 | 场景 | 输入 / 前置条件 | 预期结果 | 对应测试 |
 | --- | --- | --- | --- |
 | 真实分片推理与正文 | 本地模型依次输出同块两段 reasoning、另一块两段正文；分别公开调用 run/arun | reasoning 增量先于正文，顺序不乱；finish 不重复整块；answer 仅正文；事件 message_id 等于最终消息 ID；历史仍是原始 human/ai 链，标准 reasoning 块完整保留 | test_reasoning_deltas_are_ordered_separate_and_not_duplicated_at_finish |

@@ -6,6 +6,7 @@ import { ArrowUpRight, CircleAlert, Menu, RefreshCw, Sparkles, X } from "lucide-
 import { ConnectionDialog } from "@/features/connection/connection-dialog";
 import { WorkspaceController } from "./model/controller";
 import { sessionTitle } from "./model/format";
+import { usageFromHistory, withContextWindow } from "./model/usage";
 import { Sidebar } from "./components/sidebar";
 import { Welcome } from "./components/welcome";
 import { Composer } from "./components/composer";
@@ -30,6 +31,8 @@ export function Workspace({ controller: provided }: { controller?: WorkspaceCont
   const selected = state.sessions.find((session) => session.session_id === id);
   const history = id ? state.histories[id] : undefined;
   const run = id ? state.runs[id] : undefined;
+  const baseUsage = run?.usage ?? usageFromHistory(history?.messages ?? []);
+  const usage = withContextWindow(baseUsage, runtimeState.runtime?.usage?.context_window ?? null);
   const running = Object.values(state.runs).some((item) => item.phase === "sending" || item.receiving);
   const unknown = Object.values(state.runs).some((item) => item.phase === "unknown");
   const protectedRun = ["needs_attention", "failed", "cancelled"].includes(run?.phase ?? "");
@@ -63,7 +66,7 @@ export function Workspace({ controller: provided }: { controller?: WorkspaceCont
           history?.status === "error" || run?.phase === "needs_attention" ? <div className="empty-error"><CircleAlert size={34} /><h2>暂时无法展示这段历史</h2><p>请查看上方提示，检查后端或稍后手动重试。</p></div> :
             <Welcome connected={connected} hasSession={Boolean(id)} onConnect={() => setConnectionOpen(true)} onNew={openNew}
               onPrompt={(text) => { setDraft(text); if (!id) openNew(); }} />}
-        <Composer controls={<RuntimeControls state={runtimeState} busy={running || state.creating} onModel={(provider, model) => { void controller.runtime.changeModel(provider, model); }} onThinking={(level) => { void controller.runtime.changeThinking(level); }} />}
+        <Composer usage={usage} controls={<RuntimeControls state={runtimeState} busy={running || state.creating} onModel={(provider, model) => { void controller.runtime.changeModel(provider, model); }} onThinking={(level) => { void controller.runtime.changeThinking(level); }} />}
           settingsFeedback={!runtimeOpen && <RuntimeFeedback state={runtimeState} />} value={drafts[draftKey] ?? ""} onChange={setDraft} disabled={disabled} sending={Boolean(run?.receiving)} stopping={run?.stopping} onStop={() => { if (id) controller.stop(id); }} hint={hint} onSend={() => {
           if (!id) return;
           const text = drafts[id] ?? "";

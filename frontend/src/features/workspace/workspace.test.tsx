@@ -7,6 +7,8 @@ import { setupServer } from "msw/node";
 import { Workspace } from "./workspace";
 import { WorkspaceController } from "./model/controller";
 import { createOmtClient } from "@/lib/omt-api/client";
+import type { MessageResponse, RunEvent } from "@/lib/omt-api/contracts";
+import { usageFromHistory, withContextWindow } from "./model/usage";
 import { completedRun, sseResponse, runtime, history, sessionA, frame, runEvents, terminal } from "../../../tests/fixtures";
 
 const base = "http://localhost/api/omt";
@@ -40,6 +42,54 @@ function renderWorkspace() {
 }
 
 describe("workspace user flows with the real API client", () => {
+  it("连接即对齐容量，流中更新用量，历史刷新/会话切换/模型切换不串账", async () => {
+    const user = userEvent.setup();
+    const initial = withContextWindow(usageFromHistory([]), 272000);
+    const countedHistory: MessageResponse[] = history.map((message, index) => ({ ...message,
+      ...(message.role === "assistant" ? { usage: index === 1
+        ? { input_tokens: 20000, output_tokens: 1000, total_tokens: 21000 }
+        : { input_tokens: 25000, output_tokens: 2200, total_tokens: 27200 } } : {}) }));
+    const finished = withContextWindow(usageFromHistory(countedHistory), 272000);
+    let writer: ReadableStreamDefaultController<Uint8Array> | undefined;
+    let completed = false;
+    server.use(
+      http.get(base + "/runtime", () => HttpResponse.json({ ...runtime, usage: initial })),
+      http.get(base + "/sessions", () => HttpResponse.json([sessionA])),
+      http.post(base + "/sessions", () => HttpResponse.json({ ...sessionA, session_id: "new" }, { status: 201 })),
+      http.get(base + "/sessions/session-a/messages", () => HttpResponse.json(completed ? countedHistory : [])),
+      http.put(base + "/runtime/model", () => HttpResponse.json({ ...runtime, usage: withContextWindow(initial, 544000) })),
+      http.post(base + "/sessions/session-a/runs/stream", () => new HttpResponse(new ReadableStream<Uint8Array>({ start(controller) {
+        writer = controller;
+        const events: RunEvent[] = [
+          { ...terminal, seq: 1, type: "run.started", data: { thinking: runtime.thinking, usage: initial } },
+          { ...terminal, seq: 2, type: "usage.updated", data: { usage: finished } },
+        ];
+        controller.enqueue(new TextEncoder().encode(events.map((event) => frame(event)).join("")));
+      } }), { headers: { "Content-Type": "text/event-stream" } })),
+    );
+    const controller = renderWorkspace();
+    const label = () => screen.getByLabelText("Token 消耗与上下文占用");
+    await waitFor(() => expect(label()).toHaveTextContent("0 token 0%/272k"));
+    await connect(user);
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "消息" })).toBeEnabled());
+    await user.type(screen.getByRole("textbox", { name: "消息" }), "分析项目");
+    await user.click(screen.getByRole("button", { name: "发送消息" }));
+    await waitFor(() => expect(label()).toHaveTextContent("48.2k token 10%/272k"));
+    expect(controller.getSnapshot().runs[sessionA.session_id].phase).toBe("sending");
+    await act(async () => {
+      completed = true;
+      writer?.enqueue(new TextEncoder().encode(frame({ ...terminal, seq: 3, data: { ...terminal.data, usage: finished } })));
+      writer?.close();
+    });
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "消息" })).toHaveValue(""));
+    expect(label()).toHaveTextContent("48.2k token 10%/272k");
+    await act(async () => { await controller.createSession(); });
+    expect(label()).toHaveTextContent("0 token 0%/272k");
+    await act(async () => { controller.selectSession(sessionA.session_id); });
+    expect(label()).toHaveTextContent("48.2k token 10%/272k");
+    await act(async () => { await controller.runtime.changeModel("deepseek", "another"); });
+    expect(label()).toHaveTextContent("48.2k token 5%/544k");
+  });
   it("only probes runtime/catalogs on mount, waiting for explicit connection before reading sessions", async () => {
     const user = userEvent.setup();
     let reads = 0;

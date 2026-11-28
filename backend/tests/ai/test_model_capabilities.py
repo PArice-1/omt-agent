@@ -3,7 +3,7 @@
 import pytest
 
 from omt.ai import litellm_backend
-from omt.ai.litellm_backend import get_model_capabilities
+from omt.ai.litellm_backend import get_context_window, get_model_capabilities
 
 
 @pytest.mark.parametrize("model,expected", [
@@ -28,6 +28,34 @@ def test_sdk_metadata_is_used_for_every_provider(provider: str, monkeypatch: pyt
     capabilities = get_model_capabilities(provider=provider, model="test-capability")
     assert capabilities.reasoning_efforts == ("low", "high", "max")
     assert capabilities.available_levels == ("none", "low", "high", "max")
+
+
+@pytest.mark.parametrize(("entry", "expected"), [
+    ({"max_input_tokens": 272000, "max_tokens": 400000, "max_output_tokens": 128000}, 272000),
+    ({"max_tokens": 64000}, 64000),
+    ({"max_input_tokens": None, "max_tokens": 32000}, 32000),
+    ({"max_input_tokens": -1, "max_tokens": 0}, None),
+    ({"max_input_tokens": True, "max_output_tokens": 8000}, None),
+    ({}, None),
+])
+def test_context_window_uses_local_metadata_not_output_limit(
+    entry: dict[str, object], expected: int | None, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """不联网，优先输入窗口、兼容旧条目，不将输出相加或把非法值当容量。"""
+    monkeypatch.setitem(litellm_backend.litellm.model_cost, "openai/test-window", entry)
+    assert get_context_window(provider="openai", model="test-window") == expected
+
+
+def test_context_window_matches_provider_and_ollama_chat_route(monkeypatch: pytest.MonkeyPatch) -> None:
+    """同名裸键不能跨厂商串用，Ollama 也可从 chat 路由读取容量。"""
+    monkeypatch.setitem(litellm_backend.litellm.model_cost, "test-window", {
+        "litellm_provider": "anthropic", "max_input_tokens": 100000,
+    })
+    assert get_context_window(provider="openai", model="test-window") is None
+    monkeypatch.setitem(litellm_backend.litellm.model_cost, "ollama_chat/test-window", {
+        "litellm_provider": "ollama_chat", "max_input_tokens": 8192,
+    })
+    assert get_context_window(provider="ollama", model="test-window") == 8192
 
 
 def test_unknown_levels_are_not_confused_with_unsupported_reasoning(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
-import { sseBody, history, sessionA } from "../fixtures";
+import { sseBody, history, sessionA, runtime, terminal, frame } from "../fixtures";
+import { usageFromHistory, withContextWindow } from "../../src/features/workspace/model/usage";
 
 import { fulfillRuntime } from "./mock-runtime";
 
@@ -12,6 +13,43 @@ async function connect(page: Page) {
   await page.getByRole("dialog").getByRole("button", { name: "连接本机后端" }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
 }
+
+test("输入框下方从连接开始显示容量，发送后更新消耗，窄屏不溢出", async ({ page }) => {
+  const initial = withContextWindow(usageFromHistory([]), 272000);
+  const countedHistory = [{ role: "assistant" as const, text: "分析完成", tool_calls: [],
+    usage: { input_tokens: 25000, output_tokens: 2200, total_tokens: 27200 } }];
+  const usage = withContextWindow(usageFromHistory(countedHistory), 272000);
+  let completed = false;
+  await page.route("**/api/omt/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith("/runtime")) return route.fulfill({ json: { ...runtime, usage: initial } });
+    if (await fulfillRuntime(route)) return;
+    if (path.endsWith("/runs/stream")) {
+      completed = true;
+      const events = [
+        { ...terminal, seq: 1, type: "run.started", data: { thinking: runtime.thinking, usage: initial } },
+        { ...terminal, seq: 2, type: "usage.updated", data: { usage } },
+        { ...terminal, seq: 3, data: { ...terminal.data, usage } },
+      ];
+      return route.fulfill({ contentType: "text/event-stream", body: events.map((event) => frame(event)).join("") });
+    }
+    if (path.endsWith("/messages")) return route.fulfill({ json: completed ? countedHistory : [] });
+    return route.fulfill({ json: [sessionA] });
+  });
+  await page.goto("/");
+  const label = page.getByLabel("Token 消耗与上下文占用");
+  await expect(label).toHaveText("0 token 0%/272k");
+  await connect(page);
+  await page.getByRole("textbox", { name: "消息" }).fill("分析项目");
+  await page.getByRole("button", { name: "发送消息" }).click();
+  await expect(label).toHaveText("27.2k token 10%/272k");
+  const textbox = await page.getByRole("textbox", { name: "消息" }).boundingBox();
+  const status = await label.boundingBox();
+  expect(textbox && status && status.y > textbox.y + textbox.height).toBeTruthy();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(label).toBeInViewport();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
 
 test("light blue welcome is usable on desktop and mobile", async ({ page }, testInfo) => {
   await page.goto("/");

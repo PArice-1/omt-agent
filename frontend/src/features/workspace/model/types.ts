@@ -1,4 +1,4 @@
-import type { MessageResponse, SessionResponse, ThinkingResponse } from "@/lib/omt-api/contracts";
+import type { MessageResponse, SessionResponse, ThinkingResponse, UsageSnapshot } from "@/lib/omt-api/contracts";
 
 export type RunPhase = "idle" | "sending" | "completed" | "rejected" | "needs_attention" | "failed" | "cancelled" | "unknown";
 export type StreamItem =
@@ -15,6 +15,7 @@ export interface RunState {
   receiving?: boolean;
   stopping?: boolean;
   thinking?: ThinkingResponse | null;
+  usage?: UsageSnapshot;
   items?: StreamItem[];
 }
 export interface HistoryState {

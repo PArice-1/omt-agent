@@ -11,11 +11,25 @@ export const toolCallSchema = z.object({
   name: z.string(),
   args: z.record(z.string(), z.unknown()),
 });
+/** 后端原始 token 数；缩写只在展示层进行，缺失 usage 不当成零。 */
+export const tokenCountsSchema = z.object({
+  input_tokens: z.number().int().nonnegative(),
+  output_tokens: z.number().int().nonnegative(),
+  total_tokens: z.number().int().nonnegative(),
+});
+export const usageSchema = tokenCountsSchema.extend({
+  context_tokens: z.number().int().nonnegative().nullable(),
+  context_window: z.number().int().positive().nullable(),
+  context_used_percent: z.number().nonnegative().nullable(),
+  context_remaining_tokens: z.number().int().nonnegative().nullable(),
+  usage_complete: z.boolean(),
+});
 export const messageSchema = z.object({
   role: z.enum(["user", "assistant", "tool"]),
   text: z.string(),
   message_id: z.string().optional(),
   reasoning: z.string().optional(),
+  usage: tokenCountsSchema.optional(),
   tool_calls: z.array(toolCallSchema),
   tool_call_id: z.string().optional(),
   name: z.string().optional(),
@@ -27,6 +41,7 @@ export const runSchema = z.object({
   status: z.literal("completed"),
   answer: z.string(),
   warnings: z.array(z.string()),
+  usage: usageSchema.optional(),
 });
 export const errorSchema = z.object({
   error: z.object({ code: z.string(), message: z.string(), run_id: z.string().optional() }),
@@ -43,6 +58,7 @@ export const runtimeSchema = z.object({
   configured: z.boolean(), ready: z.boolean(), mutable: z.boolean(),
   changing: z.boolean(), busy: z.boolean(), running: z.number().int().nonnegative(),
   thinking: thinkingSchema.nullable(), message: z.string(),
+  usage: usageSchema.optional(),
 });
 export const providersSchema = z.array(z.object({ provider: z.string(), logged_in: z.boolean() }));
 export const modelsSchema = z.array(z.object({

@@ -5,6 +5,7 @@ import { classifyRunError } from "./errors";
 import { readRunStream } from "./stream";
 import { frame, runEvents, sessionA, terminal } from "../../../tests/fixtures";
 import type { RunEvent } from "./events";
+import { usageFromHistory, withContextWindow } from "@/features/workspace/model/usage";
 
 const sid = sessionA.session_id;
 function response(chunks: Uint8Array[]) {
@@ -17,6 +18,21 @@ const events = runEvents();
 const wire = events.map((event) => frame(event)).join("");
 
 describe("incremental OMT SSE", () => {
+  it("解析开始、每次模型结束及运行终态的用量快照，兼容 usage-only 空正文事件", async () => {
+    const initial = withContextWindow(usageFromHistory([]), 272000);
+    const usage = { ...initial, input_tokens: 25000, output_tokens: 2200, total_tokens: 27200,
+      context_tokens: 27200, context_used_percent: 10, context_remaining_tokens: 244800 };
+    const list: RunEvent[] = [
+      { ...terminal, seq: 1, type: "run.started", data: { thinking: null, usage: initial } },
+      { ...terminal, seq: 2, type: "usage.updated", data: { usage } },
+      { ...terminal, seq: 3, type: "run.completed", data: { status: "completed", answer: "完成", warnings: [], usage } },
+    ];
+    const received: RunEvent[] = [];
+    await readRunStream(response([encode(list.map((event) => frame(event)).join(""))]), sid, (event) => received.push(event));
+    expect(received).toEqual(list);
+    const malformed = { ...list[1], data: { usage: { ...usage, total_tokens: "27200" } } };
+    await expect(readRunStream(response([encode(frame(list[0]) + frame(malformed))]), sid, () => undefined)).rejects.toMatchObject({ code: "invalid_response" });
+  });
   it("handles every byte as a chunk, including half UTF-8 characters and frames", async () => {
     const received: RunEvent[] = [];
     const bytes = encode(wire);

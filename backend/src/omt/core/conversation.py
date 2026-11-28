@@ -24,6 +24,7 @@ from omt.agent.agent import Agent
 from . import settings
 from .events import EventHandler, RunEvent
 from .skills import discover_skills, render_skills_prompt
+from .usage import UsageSnapshot, token_counts, usage_from_messages
 
 if TYPE_CHECKING:
     from langchain_protocol.protocol import MessagesData, ToolsData
@@ -80,10 +81,21 @@ class _MessageEvents:
 class _RunEvents:
     """同步/异步共用的根图原始事件投影，不订阅惰性的每工具子通道。"""
 
-    def __init__(self, emit: EventHandler) -> None:
+    def __init__(self, emit: EventHandler, messages: Sequence[AnyMessage]) -> None:
+        """用已提交历史初始化累计下界，每次模型结束（含纯工具请求）更新一次。"""
         self.emit: EventHandler = emit
         self.models: dict[str, _MessageEvents] = {}
         self.tools: dict[str, str] = {}
+        self.usage: UsageSnapshot = usage_from_messages(messages)
+        self.reported: set[str] = set()
+
+    def report_usage(self, message_id: str, value: object) -> None:
+        """同一消息只计费一次；缺失用量仍通知入口该次统计不完整。"""
+        if message_id in self.reported:
+            return
+        self.reported.add(message_id)
+        self.usage = self.usage.add_call(token_counts(value))
+        self.emit(RunEvent("usage.updated", message_id=message_id, data=self.usage))
 
     def consume(self, event: ProtocolEvent) -> None:
         # 与原根级 messages/tool_calls 投影保持一致，不混入子图。
@@ -105,6 +117,7 @@ class _RunEvents:
                     model.consume(payload)
                     if payload["event"] == "message-finish":
                         model.complete()
+                        self.report_usage(model.message_id, payload.get("usage"))
                         del self.models[key]
         elif event["method"] == "tools":
             data: ToolsData = event["params"]["data"]
@@ -143,6 +156,7 @@ class _RunEvents:
             elif block["type"] == "reasoning":
                 projection.emit_delta("reasoning", index, block.get("reasoning", ""))
         projection.complete()
+        self.report_usage(projection.message_id, message.usage_metadata)
 
 
 class Conversation:
@@ -214,20 +228,28 @@ class Conversation:
     def _execute(self, messages: list[AnyMessage]) -> dict[str, Any] | None:
         """单次订阅根图原始事件，避免并行工具在子通道订阅前丢失进度。"""
         input_state: InputAgentState = {"messages": [*messages]}
-        projection = _RunEvents(self._emit)
-        with self.agent.stream_event(input=input_state, config=self.config) as stream:
-            for event in stream:
-                projection.consume(event)
-            return stream.output
+        projection = _RunEvents(self._emit, self.messages)
+        try:
+            with self.agent.stream_event(input=input_state, config=self.config) as stream:
+                for event in stream:
+                    projection.consume(event)
+                return stream.output
+        except BaseException:
+            self._emit(RunEvent("usage.updated", data=projection.usage.interrupted()))
+            raise
 
     async def _aexecute(self, messages: list[AnyMessage]) -> dict[str, Any] | None:
         """单一消费者保持事件顺序；取消时由图流上下文回收底层执行。"""
         input_state: InputAgentState = {"messages": [*messages]}
-        projection = _RunEvents(self._emit)
-        async with await self.agent.astream_event(input=input_state, config=self.config) as stream:
-            async for event in stream:
-                projection.consume(event)
-            return await stream.output()
+        projection = _RunEvents(self._emit, self.messages)
+        try:
+            async with await self.agent.astream_event(input=input_state, config=self.config) as stream:
+                async for event in stream:
+                    projection.consume(event)
+                return await stream.output()
+        except BaseException:
+            self._emit(RunEvent("usage.updated", data=projection.usage.interrupted()))
+            raise
 
     def _commit_result(self, result: dict[str, Any] | None) -> str:
         """只在拿到无待执行工具的最终 AIMessage 后替换历史，返回最后回答。"""

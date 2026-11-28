@@ -138,6 +138,69 @@ def application(config: ApiSettings, model: RecordingModel, tools: Sequence[Base
     return create_app(config, runtime_factory=factory)
 
 
+def test_usage_stream_aligns_initial_window_each_model_call_and_restart_history(
+    config: ApiSettings, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """连接即给容量；工具请求也统计，终态快照不重复累计，重启可从历史恢复。"""
+    from omt.core.usage import UsageSnapshot
+
+    monkeypatch.setattr("omt.ai.litellm_backend.get_context_window", Mock(return_value=272000))
+
+    @tool
+    def local_lookup() -> str:
+        """返回内存值，不访问外部服务。"""
+        return "结果"
+
+    model = RecordingModel(responses=[
+        AIMessage(content="", tool_calls=[{"name": "local_lookup", "args": {}, "id": "usage-tool"}],
+                  usage_metadata={"input_tokens": 20000, "output_tokens": 1000, "total_tokens": 21000}),
+        AIMessage(content="完成", usage_metadata={"input_tokens": 25000, "output_tokens": 2200, "total_tokens": 27200}),
+        AIMessage(content="第二轮", usage_metadata={"input_tokens": 30000, "output_tokens": 2000, "total_tokens": 32000}),
+    ])
+    app = application(config, model, [local_lookup])
+    with TestClient(app) as client:
+        initial = UsageSnapshot.model_validate(client.get("/api/omt/runtime").json()["usage"])
+        assert initial.total_tokens == 0 and initial.context_used_percent == 0
+        assert initial.context_window == 272000 and initial.context_remaining_tokens == 272000
+        identifier = session(client)
+        output = events(client.post(f"/api/omt/sessions/{identifier}/runs/stream", json={"message": "查询"}).text)
+        assert output[0].type == "run.started" and output[0].data["usage"] == initial.model_dump()
+        reports = [UsageSnapshot.model_validate(event.data["usage"]) for event in output if event.type == "usage.updated"]
+        assert [report.total_tokens for report in reports] == [21000, 48200]
+        assert reports[-1].context_used_percent == 10 and reports[-1].context_remaining_tokens == 244800
+        assert output[-1].type == "run.completed" and output[-1].data["usage"] == reports[-1].model_dump()
+    with TestClient(app) as client:
+        history = client.get(f"/api/omt/sessions/{identifier}/messages").json()
+        assert [message["usage"]["total_tokens"] for message in history if message["role"] == "assistant"] == [21000, 27200]
+        output = events(client.post(f"/api/omt/sessions/{identifier}/runs/stream", json={"message": "继续"}).text)
+        assert UsageSnapshot.model_validate(output[0].data["usage"]).total_tokens == 48200
+        assert UsageSnapshot.model_validate(output[-1].data["usage"]).total_tokens == 80200
+        assert len(model.seen) == 3
+
+
+def test_usage_unknown_model_missing_report_and_model_switch_are_explicit(
+    config: ApiSettings, sdk: list[RecordingModel], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """未知目录/未报告用量不虚报零；切模型响应在下一次请求前就更新容量。"""
+    from omt.core.usage import UsageSnapshot
+
+    seed(config)
+    monkeypatch.setattr("omt.ai.litellm_backend.get_context_window",
+                        lambda *, provider, model: 272000 if model == "deepseek-flash" else None)
+    with TestClient(create_app(config)) as client:
+        assert client.get("/api/omt/runtime").json()["usage"]["context_window"] == 272000
+        identifier = session(client)
+        output = events(client.post(f"/api/omt/sessions/{identifier}/runs/stream", json={"message": "没有用量"}).text)
+        snapshot = UsageSnapshot.model_validate(output[-1].data["usage"])
+        assert snapshot.total_tokens == 0 and not snapshot.usage_complete
+        assert snapshot.context_tokens is None and snapshot.context_used_percent is None
+        changed = client.put("/api/omt/runtime/model", json={"provider": "deepseek", "model": "test-plain"}).json()
+        assert changed["usage"]["context_window"] is None
+        output = events(client.post(f"/api/omt/sessions/{identifier}/runs/stream", json={"message": "未知窗口"}).text)
+        assert UsageSnapshot.model_validate(output[0].data["usage"]).context_window is None
+        assert UsageSnapshot.model_validate(output[-1].data["usage"]).usage_complete is False
+
+
 def test_runtime_factory_supports_switching_and_closes_current_manager(
     config: ApiSettings, sdk: list[RecordingModel],
 ) -> None:
@@ -531,7 +594,8 @@ def test_stream_rejections_and_sanitized_execution_failure(config: ApiSettings) 
         """抛出私有异常。"""
         raise RuntimeError(KEY)
 
-    model = RecordingModel(responses=[AIMessage(content="", tool_calls=[{"name": "broken", "id": "bad", "args": {}}])])
+    model = RecordingModel(responses=[AIMessage(content="", tool_calls=[{"name": "broken", "id": "bad", "args": {}}],
+        usage_metadata={"input_tokens": 100, "output_tokens": 20, "total_tokens": 120})])
     with TestClient(application(config, model, [broken])) as client:
         assert client.post("/api/omt/sessions/missing/runs/stream", json={"message": "执行"}).status_code == 404
         assert not model.seen
@@ -540,6 +604,9 @@ def test_stream_rejections_and_sanitized_execution_failure(config: ApiSettings) 
         received = events(response.text)
         assert response.status_code == 200 and received[-1].type == "run.failed"
         assert received[-1].data["code"] == "run_failed" and KEY not in response.text
+        usage = received[-1].data["usage"]
+        assert isinstance(usage, dict) and usage["total_tokens"] == 120
+        assert usage["usage_complete"] is False and usage["context_tokens"] is None
         assert not any(item.type == "run.completed" for item in received)
         retry = client.post(f"/api/omt/sessions/{identifier}/runs/stream", json={"message": "重试"})
         assert retry.status_code == 409 and "run.started" not in retry.text

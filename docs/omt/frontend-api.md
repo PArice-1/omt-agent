@@ -49,7 +49,13 @@ GET /api/omt/runtime
     "reasoning_effort": "high",
     "available_levels": ["none", "low", "medium", "high"]
   },
-  "message": "运行环境已就绪"
+  "message": "运行环境已就绪",
+  "usage": {
+    "input_tokens": 0, "output_tokens": 0, "total_tokens": 0,
+    "context_tokens": 0, "context_window": 272000,
+    "context_used_percent": 0, "context_remaining_tokens": 272000,
+    "usage_complete": true
+  }
 }
 ```
 
@@ -63,10 +69,37 @@ GET /api/omt/runtime
 | `running` | Manager 已占位且尚未结束的轮次数 |
 | `thinking` | 当前运行配置；尚无运行实例时为 null |
 | `message` | 安全状态提示，不含底层异常原文 |
+| `usage` | 新会话用量基线与当前模型窗口；用于连接、配置确认及模型切换后的立即对齐，不是所有会话的累计账单 |
 
 `thinking.level` 是请求等级，reasoning_effort 是由 SDK 能力解析后的值：支持时同名透传，否则 none 回退，不再使用磁盘 high→max 映射。UI 必须提示回退，不能把请求等级当实际能力；none 是应用默认项，不保证服务端关闭推理。
 
 `available_levels` 保留服务端顺序：none 在首，其余来自 LiteLLM 元数据（含 minimal/xhigh），未声明的不补造。未知能力与明确无推理能力都可能只返回 none，但前者并不表示模型不支持推理；不增加响应字段或改变 HTTP/SSE 契约。运行状态、快捷列表及流快照共用相同能力源，**前端不要重排**。下面具名模型与数组是协议示例，不是每个 SDK 版本的能力保证；实际以返回值为准。
+
+### Token 消耗与上下文快照
+
+```ts
+interface TokenCounts {
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+}
+interface UsageSnapshot extends TokenCounts {
+  context_tokens: number | null;
+  context_window: number | null;
+  context_used_percent: number | null;
+  context_remaining_tokens: number | null;
+  usage_complete: boolean;
+}
+```
+
+- 计数均为原始非负整数，单位 token，不在 API 中发送 `k/m/b` 字符串。累计消耗按**当前会话**各次模型调用求和，包括只生成工具请求的调用；不另行累加工具正文、缓存明细或已包含在输出中的 reasoning。
+- `context_tokens` 是**最近一次完成的模型请求输入 + 输出**，不是累计消耗；包括模型已接收的系统提示词、历史和工具定义等，不包含未发送草稿或随后追加的工具结果。它是最近请求的占用快照，不是下一次请求的精确预估。
+- `context_window` 来自当前运行模型的 LiteLLM 本地元数据，优先 `max_input_tokens`，旧条目回退 `max_tokens`，不与 `max_output_tokens` 相加。未知模型为 null；不会为了展示向服务商联网查询。该值不保证中转服务或部署没有额外限制。
+- `context_used_percent = context_tokens / context_window * 100`，表示**已使用比例**，不是剩余比例；保留两位小数，超限可大于 100。`context_remaining_tokens = max(0, context_window - context_tokens)`。容量或占用未知时，两项为 null。
+- 新会话为零消耗/零占用，已知窗口时连接即显示 `0 token 0%/272k`，不用先发送模型请求。`GET runtime` 的基线不能覆盖所选旧会话的累计；恢复时从历史助手消息的 `usage` 重建，流开始后以服务端快照替换。
+- 上游未报告 usage、历史缺失统计，或运行异常/取消可能丢失用量时，`usage_complete=false`，累计只表示已知下界，不把缺失当零；最近请求未报告/运行中断则占用为 null。断流不能保证收到最终统计。成功历史恢复可重建已提交消息的统计，不是独立持久化的服务商计费账本。
+- CLI/Web 在输入框下显示 `48.2k token 10%/272k`。按十进制缩写：小于 1000 用整数（`100 token`），之后使用 `k/m/b`（千/百万/十亿），最多一位小数且舍入到下一单位时进位。不完整累计加 `≥`，未知占用/容量显示 `--`，例如 `≥48.2k token --%/272k`。
+- 临时切模型立即使用新窗口重算百分比，不清空会话累计；占用仍取最近请求，不代表新模型已经重新计算历史。历史/流状态绑定会话 ID，不能把其他会话或旧连接的用量写入当前会话。
 
 ### GET /api/omt/providers
 
@@ -209,6 +242,7 @@ interface MessageResponse {
   text: string;
   message_id?: string;
   reasoning?: string;
+  usage?: TokenCounts; // 仅助手消息；这是单次调用用量，旧历史可缺失
   tool_calls: { id?: string; name: string; args: Record<string, unknown> }[];
   tool_call_id?: string;
   name?: string;
@@ -220,6 +254,7 @@ interface RunResponse {
   status: 'completed';
   answer: string;
   warnings: string[];
+  usage: UsageSnapshot;
 }
 ```
 
@@ -282,7 +317,8 @@ data: {"seq":3,"type":"assistant.reasoning.delta","session_id":"...","run_id":".
 
 | type | data | 含义 |
 | --- | --- | --- |
-| `run.started` | `{thinking: ThinkingResponse}` | 正式占位且历史通过校验；实际厂商/模型、请求等级和实际 effort 在 data.thinking 内，不另设 data.model；统一从 SessionRuntime 获取本轮快照，不保证上游可达 |
+| `run.started` | `{thinking: ThinkingResponse, usage: UsageSnapshot}` | 正式占位且历史通过校验；实际厂商/模型、请求等级和实际 effort 在 data.thinking 内，不另设 data.model；统一从 SessionRuntime 获取本轮快照，不保证上游可达 |
+| `usage.updated` | `{usage: UsageSnapshot}` | 每次模型调用完成后发送当前会话累计快照，含纯工具请求；客户端替换而非相加，不创建助手/工具卡片 |
 | `assistant.started` | `{}` | 一条有可展示内容的助手消息开始 |
 | `assistant.text.delta` | `{delta: string}` | 正文追加片段 |
 | `assistant.reasoning.delta` | `{delta: string}` | 提供商实际返回的 reasoning 片段，不保证所有模型都有 |
@@ -291,9 +327,9 @@ data: {"seq":3,"type":"assistant.reasoning.delta","session_id":"...","run_id":".
 | `tool.delta` | `{name: string, delta: JSON值}` | 工具主动报告的 JSON 进度，可能是对象而非文本；不保证每个工具都提供 |
 | `tool.completed` | `{name: string, text: string, status: "success"}` 或 `{name: string, output: JSON值}` | 常规 ToolMessage 结果剔除 artifact；其他 JSON 返回使用 output，不能假定总有 text |
 | `tool.failed` | `{name: string, text: string, status: "error"}` 或 `{name: string, code: "tool_failed", message: string}` | 已处理错误的工具正文，或安全的执行失败说明，不发送未处理异常原文；仅结束该工具，不代表整轮失败 |
-| `run.completed` | `{status:"completed", answer, warnings}` | 成功终态，answer 是权威最终回答，不是所有正文增量的拼接 |
-| `run.failed` | `{code, message}` | 失败终态，可能已有副作用 |
-| `run.cancelled` | `{code:"run_cancelled", message}` | 运行被取消；断线后不保证能收到 |
+| `run.completed` | `{status:"completed", answer, warnings, usage: UsageSnapshot}` | 成功终态，answer 是权威最终回答，不是所有正文增量的拼接 |
+| `run.failed` | `{code, message, usage: UsageSnapshot}` | 失败终态，可能已有副作用 |
+| `run.cancelled` | `{code:"run_cancelled", message, usage: UsageSnapshot}` | 运行被取消；断线后不保证能收到 |
 
 正文、reasoning 和工具可能交替出现，多次调用同名工具也可能并行；seq 只保证 Adapter 的发送顺序，不承诺底层所有并行事件的绝对发生顺序。客户端分别累积每条消息的正文/reasoning。最终 answer 用于确认或替换最终回答，不能重复追加，更不能把中间计划发言拼成最终答案。
 
@@ -301,11 +337,11 @@ data: {"seq":3,"type":"assistant.reasoning.delta","session_id":"...","run_id":".
 
 ### 一轮带工具调用的顺序示例
 
-以下为一种合法顺序，工具名和 ID 为示意；每一行实际编码成前述 `event:` + `data:` + 空行的 SSE 帧。thinking 对象字段见第 2 节；真实传输没有省略号。
+以下为内容事件顺序示意，省略穿插的 `usage.updated` 及终态中的 usage 字段（实际 seq 随用量事件递增），工具名和 ID 为示意；每一行实际编码成前述 `event:` + `data:` + 空行的 SSE 帧。thinking 对象字段见第 2 节；真实传输没有省略号。
 
 | seq | type | message_id | tool_call_id | data |
 | --- | --- | --- | --- | --- |
-| 1 | run.started | 不发送 | 不发送 | `{thinking: ThinkingResponse}` |
+| 1 | run.started | 不发送 | 不发送 | `{thinking: ThinkingResponse, usage: UsageSnapshot}` |
 | 2 | assistant.started | m1 | 不发送 | `{}` |
 | 3 | assistant.reasoning.delta | m1 | 不发送 | `{"delta":"先分析"}` |
 | 4 | assistant.text.delta | m1 | 不发送 | `{"delta":"正在查询"}` |
@@ -325,6 +361,7 @@ data: {"seq":3,"type":"assistant.reasoning.delta","session_id":"...","run_id":".
 | 收到事件 | 更新方式 |
 | --- | --- |
 | run.started | 将本次请求标为运行中，绑定 session_id/run_id，展示本轮 thinking 快照，而非以后切换的新配置 |
+| usage.updated | 替换该会话的累计用量及上下文快照，不能把快照再次求和；run.started/运行终态中的 usage 同理 |
 | assistant.started | 按 session_id + run_id + message_id 建立临时助手消息；不是每个 delta 新建一条消息 |
 | assistant.text.delta | 仅向该消息正文追加 data.delta |
 | assistant.reasoning.delta | 仅向同一消息的独立 reasoning 区域追加 data.delta，不拼入正文或下一轮请求 |

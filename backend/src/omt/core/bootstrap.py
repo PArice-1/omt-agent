@@ -186,6 +186,13 @@ class SessionRuntime:
         return self._changing
 
     @property
+    def context_window(self) -> int | None:
+        """启动即提供当前模型的本地窗口上限；切换成功后随运行快照更新。"""
+        from omt.ai.litellm_backend import get_context_window
+
+        return get_context_window(provider=self._settings.defaultProvider, model=self._definition.id)
+
+    @property
     def thinking(self) -> ThinkingStatus:
         return _thinking_status(self._settings, self._definition)
 

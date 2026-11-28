@@ -11,6 +11,8 @@
 
 ## 场景
 
+新增用量基线、每次模型调用快照、失败下界、模型切换与重启历史统计见[Token 用量专项](usage.md)；原有流式事件顺序和安全投影仍保留。
+
 | 场景 | 输入 / 前置条件 | 预期结果 | 对应测试 |
 | --- | --- | --- | --- |
 | 唯一 Runtime 工厂与关闭 | 配置就绪后通过 runtime_factory 注入真实 SessionRuntime，切换模型并继续已有会话，最后退出 lifespan | 工厂延迟且只进入一次；配置入口和切换可用、mutable=true、thinking 非空；下一轮使用新模型，退出清理继任 Manager | test_runtime_factory_supports_switching_and_closes_current_manager |

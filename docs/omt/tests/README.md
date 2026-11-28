@@ -8,6 +8,7 @@
 
 | 说明 | 对应测试 |
 | --- | --- |
+| [Token 消耗与上下文展示](usage.md) | [test_usage.py](../../../backend/tests/core/test_usage.py)、AI 桥接/容量、HTTP/SSE 与 CLI/TUI 用量专项及前端测试 |
 | [模型初始化与 SDK 能力](ai-models.md) | [test_model_capabilities.py](../../../backend/tests/ai/test_model_capabilities.py)、[test_ai.py](../../../backend/tests/ai/test_ai.py)、[test_models_manager.py](../../../backend/tests/ai/test_models_manager.py)、[test_litellm_backend.py](../../../backend/tests/ai/test_litellm_backend.py)、[test_litellm_stream.py](../../../backend/tests/ai/test_litellm_stream.py)、[test_model_catalog.py](../../../backend/tests/ai/test_model_catalog.py) |
 | [Ollama 本地模型适配](ollama.md) | [test_ollama.py](../../../backend/tests/ai/test_ollama.py) |
 | [Agent 与同步/异步 v3 流](agent.md) | [test_agent.py](../../../backend/tests/test_agent.py)、[test_agent_stream.py](../../../backend/tests/test_agent_stream.py)、[test_agent_async.py](../../../backend/tests/test_agent_async.py) |

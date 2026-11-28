@@ -1,4 +1,4 @@
-import type { LoginConfirmation, LoginPreview, ModelsResponse, OmtClient, ProvidersResponse, RuntimeResponse } from "@/lib/omt-api/contracts";
+import type { LoginConfirmation, LoginPreview, ModelsResponse, OmtClient, ProvidersResponse, RuntimeResponse, ThinkingResponse, UsageSnapshot } from "@/lib/omt-api/contracts";
 import { errorMessage } from "@/lib/omt-api/errors";
 
 export interface RuntimeState {
@@ -69,6 +69,15 @@ export class RuntimeController {
       // Only reads: a consumed preview must never be confirmed a second time.
       await this.inspect();
     }
+  };
+  /** 运行接纳快照比页面旧的 GET 更新；对齐其他客户端切模型后的容量，不发额外请求。 */
+  alignRun = (thinking: ThinkingResponse | null, usage: UsageSnapshot | undefined) => {
+    const current = this.state.runtime;
+    if (!current || !usage) return;
+    this.patch({ runtime: { ...current, thinking,
+      usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0, context_tokens: 0,
+        context_window: usage.context_window, context_used_percent: usage.context_window === null ? null : 0,
+        context_remaining_tokens: usage.context_window, usage_complete: true } } });
   };
   changeModel = (provider: string, model: string) => this.change("model", () => this.api.changeModel(provider, model));
   changeThinking = (level: string) => this.change("thinking", () => this.api.changeThinking(level));

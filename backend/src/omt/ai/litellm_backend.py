@@ -54,6 +54,24 @@ def get_model_capabilities(*, provider: str, model: str) -> ModelCapabilities:
     return ModelCapabilities(None, None)
 
 
+def get_context_window(*, provider: str, model: str) -> int | None:
+    """只查 SDK 本地表的最大输入/上下文容量，未知返回 None，不联网探测服务。
+
+    优先使用 max_input_tokens，旧条目回退 max_tokens；max_output_tokens 不可
+    相加当作总窗口。它是提供商元数据上限，不保证中转服务或部署未另行缩小。
+    """
+    route = "ollama_chat" if provider == "ollama" else provider
+    for key in dict.fromkeys((f"{provider}/{model}", f"{route}/{model}", model)):
+        entry: dict[str, object] | None = litellm.model_cost.get(key)
+        if entry is None or (key == model and entry.get("litellm_provider") not in (provider, route)):
+            continue
+        for field in ("max_input_tokens", "max_tokens"):
+            value = entry.get(field)
+            if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+                return value
+    return None
+
+
 @validate_call(config=ConfigDict(hide_input_in_errors=True))
 def initialize_litellm_model(
     provider: str,

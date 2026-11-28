@@ -1,7 +1,8 @@
 import type { z } from "zod";
-import type { healthSchema, messageSchema, runSchema, sessionSchema, toolCallSchema, runtimeSchema, thinkingSchema, modelsSchema, providersSchema, previewSchema, confirmationSchema } from "./schemas";
+import type { usageSchema, healthSchema, messageSchema, runSchema, sessionSchema, toolCallSchema, runtimeSchema, thinkingSchema, modelsSchema, providersSchema, previewSchema, confirmationSchema } from "./schemas";
 import type { RunEvent, TerminalEvent } from "./events";
 export type { RunEvent, TerminalEvent } from "./events";
+export type UsageSnapshot = z.infer<typeof usageSchema>;
 export type RuntimeResponse = z.infer<typeof runtimeSchema>;
 export type ThinkingResponse = z.infer<typeof thinkingSchema>;
 export type ModelsResponse = z.infer<typeof modelsSchema>;

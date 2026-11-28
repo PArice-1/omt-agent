@@ -5,6 +5,7 @@ import sqlite3
 from collections.abc import Iterator
 from contextlib import closing
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
@@ -22,7 +23,7 @@ def isolated_cli(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[No
     monkeypatch.setenv("OMT_CLI_MCP_SERVERS", "{}")
     # 默认目录在 Settings 导入时已展开，改 HOME/root 不能隔离，必须显式覆盖。
     monkeypatch.setenv("OMT_CLI_SKILL_ROOTS", json.dumps([str(tmp_path / "skills")]))
-    monkeypatch.setattr("omt.cli.app.PromptSession", lambda: None)
+    monkeypatch.setattr("omt.cli.app.PromptSession", Mock)
     yield
     agent_settings.load_settings.cache_clear()
 

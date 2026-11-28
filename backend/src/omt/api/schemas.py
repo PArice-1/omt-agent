@@ -9,6 +9,7 @@ from omt.core.model_configuration import provider_requires_api_key, supported_pr
 from omt.core.session_manager import validate_message
 from omt.core.settings import NonEmptyString
 from omt.core.store import SessionRecord
+from omt.core.usage import TokenCounts, UsageSnapshot, token_counts
 
 
 class CreateSessionRequest(BaseModel):
@@ -58,6 +59,7 @@ class MessageResponse(BaseModel):
     text: str
     message_id: str | None = None
     reasoning: str | None = None
+    usage: TokenCounts | None = None
     tool_calls: list[ToolCallResponse] = Field(default_factory=list)
     tool_call_id: str | None = None
     name: str | None = None
@@ -84,7 +86,7 @@ def project_history(messages: list[AnyMessage]) -> list[MessageResponse]:
         elif isinstance(message, AIMessage):
             result.append(MessageResponse(
                 role="assistant", text=message.text, message_id=message.id,
-                reasoning=reasoning_text(message),
+                reasoning=reasoning_text(message), usage=token_counts(message.usage_metadata),
                 tool_calls=[ToolCallResponse(id=call["id"], name=call["name"], args=call["args"])
                             for call in message.tool_calls],
             ))
@@ -103,6 +105,7 @@ class RunResponse(BaseModel):
     status: Literal["completed"] = "completed"
     answer: str
     warnings: list[str] = Field(default_factory=list)
+    usage: UsageSnapshot = Field(default_factory=UsageSnapshot)
 
 
 class StrictRequest(BaseModel):
@@ -135,6 +138,7 @@ class RuntimeResponse(BaseModel):
     running: int
     thinking: ThinkingResponse | None
     message: str
+    usage: UsageSnapshot = Field(default_factory=UsageSnapshot)
 
 
 class ProviderResponse(BaseModel):

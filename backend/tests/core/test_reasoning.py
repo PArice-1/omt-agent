@@ -59,7 +59,7 @@ def test_reasoning_deltas_are_ordered_separate_and_not_duplicated_at_finish(asyn
     assert [event.text for event in received if event.kind == "assistant.delta"] == ["答", "案"]
     assert [event.kind for event in received] == [
         "assistant.started", "assistant.reasoning.delta", "assistant.reasoning.delta",
-        "assistant.delta", "assistant.delta", "assistant.completed",
+        "assistant.delta", "assistant.delta", "assistant.completed", "usage.updated",
     ]
     assert {event.message_id for event in received} == {conversation.messages[-1].id}
     assert [message.type for message in conversation.messages] == ["human", "ai"]

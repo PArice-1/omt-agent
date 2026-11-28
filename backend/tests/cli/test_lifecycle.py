@@ -324,7 +324,8 @@ def test_cli_sigint_exits_and_closes_manager(cli_db: Path, tmp_path: Path) -> No
 
         app.open_manager = factory
         app.read_input = read_input
-        app.PromptSession = lambda: None
+        from unittest.mock import Mock
+        app.PromptSession = Mock
         app.main(["--plain"])
         with closing(sqlite3.connect(CliSettings().db_path)) as connection:
             rows = connection.execute("SELECT workspace_path FROM sessions").fetchall()

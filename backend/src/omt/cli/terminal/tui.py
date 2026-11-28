@@ -20,6 +20,7 @@ from omt.cli.settings import CliSettings
 from omt.core import model_configuration
 from omt.core.bootstrap import SessionRuntime, open_session_runtime
 from omt.core.events import RunEvent
+from omt.core.usage import UsageSnapshot, format_usage, usage_from_messages
 from omt.core.model_configuration import LoginResult
 from omt.core.session_manager import SessionError, SessionManager, validate_message
 from omt.core.store import SessionRecord, initialize_session_database
@@ -70,6 +71,8 @@ class OmtApp(App[None]):
         self.factory = runtime_factory or open_session_runtime
         self.active: SessionRuntime | SessionManager | None = None
         self.current: SessionRecord | None = None
+        self.usage = UsageSnapshot()
+        self.usage_status = Static(format_usage(self.usage), id="usage-status", markup=False)
         self.busy = False
         # 不覆盖 Textual MessagePump._closing；否则退出时消息泵会卡住。
         self._shutting_down = False
@@ -104,6 +107,7 @@ class OmtApp(App[None]):
                 with Horizontal(id="status-bar"):
                     yield self.model_status
                     yield self.key_hint
+                yield self.usage_status
 
     def on_mount(self) -> None:
         _ = self.start_operation(self._boot)
@@ -146,6 +150,8 @@ class OmtApp(App[None]):
             text = "固定模型" if self.active is not None else "未连接 · /login"
         status = f"{text} · {session}" if self.size.width >= 76 else text
         self.model_status.update(Text(status, no_wrap=True, overflow="ellipsis"))
+        window = self.active.context_window if isinstance(self.active, SessionRuntime) else None
+        self.usage_status.update(format_usage(self.usage.with_window(window)))
         self.activity.display = self.busy
         self.update_hint()
 
@@ -273,6 +279,10 @@ class OmtApp(App[None]):
     async def on_stream_event(self, message: StreamEvent) -> None:
         event = message.event
         follow = self.transcript.is_vertical_scroll_end
+        if event.kind == "usage.updated" and isinstance(event.data, UsageSnapshot):
+            self.usage = event.data
+            self.update_status()
+            return
         if event.kind in {"assistant.started", "assistant.delta"}:
             if event.kind == "assistant.started" or self._assistant is None:
                 self._assistant = ChatMessage("助手", "", markdown=True)
@@ -337,6 +347,7 @@ class OmtApp(App[None]):
     async def restore_session(self, session_id: str) -> None:
         opened = await self.manager().open_session(session_id)
         self.current = opened.record
+        self.usage = usage_from_messages(opened.messages)
         await self.transcript.remove_children()
         await self.show_history(opened.messages)
         if opened.warnings:
@@ -389,6 +400,7 @@ class OmtApp(App[None]):
             _ = self.start_operation(self.clear_chat)
 
     async def clear_chat(self) -> None:
+        self.usage = UsageSnapshot()
         await self.transcript.remove_children()
         await self.say("新对话", "输入第一条消息后才登记会话；旧会话仍可按 F3 恢复。")
 
