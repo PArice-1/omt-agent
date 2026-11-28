@@ -22,7 +22,7 @@ class ModelProvider:
     """声明厂商连接与目录能力，保留上层配置接口；默认仅使用 LiteLLM。
 
     base_url 为可信默认服务地址，requires_api_key=False 仅用于本地免 Key 服务。
-    思考能力不放在注册表维护，统一从 LiteLLM 元数据解析。
+    思考能力不放在注册表维护，由 LiteLLM 底座统一解析。
     initialize/list_models 仍可注入替身，避免测试访问真实服务。
     """
 

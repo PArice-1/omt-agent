@@ -46,11 +46,11 @@ def resolve_model_parameters(
     """只读解析及校验模型配置，不初始化 SDK、不请求网络或创建数据库。
 
     credentials=None 时读取内部认证；显式映射（包括空映射）是已选配置快照，
-    不再访问认证文件。reasoning_effort=None 使用 SDK 能力解析，显式覆盖只影响本次构造并交 SDK 校验。
-    未配置或 SDK 未声明所选等级时按 "none" 回退，不依赖磁盘旧思考映射。
+    不再访问认证文件。reasoning_effort=None 使用模型能力解析，显式覆盖只影响本次构造并交模型底座处理。
+    未配置或当前模型不提供所选等级时按 "none" 回退，不依赖磁盘旧思考映射。
 
-    defaultThinkingLevel 中的非 none 等级仅在 LiteLLM 声明支持时原样传入，不做本地转换。
-    none 是应用默认项，不保证关闭服务端推理；只有 SDK 声明支持关闭时才发送 none。
+    defaultThinkingLevel 中已支持的非 none 等级原样传入，不做本地强度转换。
+    none 是应用默认项，模型底座只在明确支持关闭时发送相应参数。
     模型选择仍严格校验；需认证厂商验证 Key，免 Key 厂商不读取 auth.json，
     不回退到其他模型或用占位凭据绕过校验。
     definition 可传入已解析的目录快照，复用已验证的连接定义；其 ID/provider 必须匹配设置。
@@ -91,7 +91,7 @@ def build_model(
     """通过共用解析规则创建内部模型；默认读取本机配置，不发送聊天请求。
 
     definition/credentials 是隔离运行时的最小快照；显式提供后不读取对应本机文件。
-    reasoning_effort 仅覆盖当前构造，None 则结合 defaultThinkingLevel 与 SDK 能力解析。
+    reasoning_effort 仅覆盖当前构造，None 则结合 defaultThinkingLevel 与模型能力解析。
     以上覆盖不会写入设置、认证或目录；CLI/API 不传覆盖时沿用原有行为。
     """
     return Model(**resolve_model_parameters(
@@ -121,7 +121,7 @@ async def build_agent(
 
 @dataclass(frozen=True)
 class ThinkingStatus:
-    """不含凭据的模型状态；等级由 SDK 声明，none 为应用回退而非关闭保证。"""
+    """不含凭据的模型状态；等级由模型底座解析，none 为应用回退而非关闭保证。"""
 
     provider: str
     model: str
@@ -144,7 +144,7 @@ def _load_model_definition(settings: Settings) -> ModelDefinition:
 
 
 def _thinking_status(settings: Settings, definition: ModelDefinition) -> ThinkingStatus:
-    """统一运行状态与构造的能力来源，保持请求等级并对 SDK 未知等级回退。"""
+    """统一运行状态与构造的能力来源，保持请求等级，对当前模型未提供的等级回退。"""
     capabilities = get_model_capabilities(provider=settings.defaultProvider, model=definition.id)
     level = settings.defaultThinkingLevel or "none"
     effort = level if level in capabilities.available_levels else "none"
@@ -197,9 +197,9 @@ class SessionRuntime:
         return _thinking_status(self._settings, self._definition)
 
     async def set_thinking_level(self, level: str) -> None:
-        """从下一轮使用新等级；SDK 未声明的等级按 none，构建失败保留旧模型和状态。
+        """从下一轮使用新等级；模型未提供的等级按 none，构建失败保留旧模型和状态。
 
-        level 是 SDK 声明的等级或应用回退项 none，必须非空。切换会重新创建 Model、Agent、
+        level 为请求的非空等级，通常是模型提供的等级或应用回退项 none。切换会重新创建 Model、Agent、
         Manager，但复用历史和失败保护；不调用模型试运行，不重写设置缓存或文件。
         并行切换立即拒绝；有运行/历史操作时交接也会被 Manager 拒绝。
         """
@@ -213,7 +213,7 @@ class SessionRuntime:
         """选择已导入的模型供后续轮次使用，不读写默认选择或发送试运行请求。
 
         provider/model_name 为注册厂商及目录精确 ID。本次重新读取目录快照和认证，
-        保留当前请求思考等级，SDK 未声明时按 none；复用会话、MCP 和检查点。
+        保留当前请求思考等级，所选模型不提供该等级时按 none；复用会话、MCP 和检查点。
         构建失败、取消或 Manager 忙碌时保持原实例及状态。
         """
         self._ensure_can_change()

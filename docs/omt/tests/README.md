@@ -92,7 +92,7 @@ uv run pytest -q --tb=no
 
 - [core/conftest.py](../../../backend/tests/core/conftest.py) 的自动 fixture 将 `settings.root` 和 cwd 指向每例的 `tmp_path`，并在前后清空设置缓存。配置测试不能只 `chdir`：实际配置目录可能固定在用户 HOME。Conversation 测试也同时隔离默认用户和项目 Skills。CLI 测试的 [cli/conftest.py](../../../backend/tests/cli/conftest.py) 额外清理入口环境变量，并显式关闭 MCP，将 CLI 的 Skills 搜索覆盖为 tmp_path/skills，避免读取在设置类导入时已展开的真实 ~/.agents/skills。
 - [ai/conftest.py](../../../backend/tests/ai/conftest.py) 在共用桥接工厂处返回本地假模型，并阻断 DNS/socket；协议用例使用真实 ChatLiteLLM/LiteLLM 配内存 HTTP 传输，流用例串联原有 Agent/Conversation 和内存检查点。
-- 根 [conftest.py](../../../backend/tests/conftest.py) 提供显式申请的 sdk_reasoning 元数据 fixture；仅改测试进程的 SDK 表并自动恢复，不持久化模型能力。多厂商配置、CLI/TUI/API 的具名等级由该替身控制；真实固定版本的能力数据由 test_model_capabilities.py 单独验证，不能将测试注入的 DeepSeek 三档视为 SDK 本来就提供。
+- 根 [conftest.py](../../../backend/tests/conftest.py) 提供显式申请的 sdk_reasoning 元数据 fixture；仅改测试进程的 SDK 表并自动恢复，不持久化模型能力。多厂商配置、CLI/TUI/API 的具名等级由该替身控制；真实固定版本的能力数据由 test_model_capabilities.py 单独验证；Flash 的兼容档位和出站请求另有不注入 SDK 数据的回归，其他测试注入的 DeepSeek 档位不代表 SDK 自带这些等级。
 - 顶层 Agent 和 core 下的 Conversation 测试直接注入假模型，不读取配置或真实认证；Conversation 测试另用局部自动 fixture 隔离 settings.root 与 cwd，避免扫描真实 Skills。
 - 文件操作只使用临时目录。Bash 测试只执行本地假数据命令，并清理测试启动的进程；POSIX/Bash 或 FIFO 不可用时允许有明确原因的跳过。
 - 真实模型调用、真实账户 OAuth、远程服务和用户终端的人工验证不属于默认测试通过的含义；需要额外授权并与离线结果分开报告。

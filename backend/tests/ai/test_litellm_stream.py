@@ -20,8 +20,9 @@ from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler, HTTPHandler
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
-def test_existing_conversation_interface_stream_tools_and_resume(asynchronous: bool) -> None:
-    """传输替身返回分片工具调用；上层原接口消费事件、回传工具结果并恢复历史。"""
+@pytest.mark.parametrize(("model", "effort"), [("deepseek-chat", "high"), ("deepseek-v4-flash", "max")])
+def test_existing_conversation_interface_stream_tools_and_resume(asynchronous: bool, model: str, effort: str) -> None:
+    """消费分片工具调用并恢复历史；Flash 的 max 在工具轮和恢复后都不能丢。"""
     requests: list[dict[str, Any]] = []
     received: list[RunEvent] = []
     executions: list[int] = []
@@ -38,6 +39,9 @@ def test_existing_conversation_interface_stream_tools_and_resume(asynchronous: b
         requests.append(body)
         assert request.url.path == "/v1/chat/completions" and body["stream"] is True
         assert body["tools"][0]["function"]["name"] == "double"
+        if model == "deepseek-v4-flash":
+            assert body["model"] == model
+            assert body["thinking"] == {"type": "enabled"} and body.get("reasoning_effort") == "max"
         assert body["stream_options"]["include_usage"] is True
         if len(requests) == 1:
             deltas = [
@@ -52,20 +56,20 @@ def test_existing_conversation_interface_stream_tools_and_resume(asynchronous: b
             deltas = [{"role": "assistant", "reasoning_content": "检查结果"}, {"content": "结果"}, {"content": "是8"}]
             finish = "stop"
         frames: list[dict[str, object]] = [{"id": f"reply-{len(requests)}", "object": "chat.completion.chunk", "created": 1,
-                   "model": "deepseek-chat", "choices": [{"index": 0, "delta": delta, "finish_reason": None}]}
+                   "model": model, "choices": [{"index": 0, "delta": delta, "finish_reason": None}]}
                   for delta in deltas]
         frames.append({"id": f"reply-{len(requests)}", "object": "chat.completion.chunk", "created": 1,
-                       "model": "deepseek-chat", "choices": [{"index": 0, "delta": {}, "finish_reason": finish}]})
+                       "model": model, "choices": [{"index": 0, "delta": {}, "finish_reason": finish}]})
         frames.append({"id": f"reply-{len(requests)}", "object": "chat.completion.chunk", "created": 1,
-                       "model": "deepseek-chat", "choices": [],
+                       "model": model, "choices": [],
                        "usage": {"prompt_tokens": 100 * len(requests), "completion_tokens": 20,
                                  "total_tokens": 100 * len(requests) + 20}})
         sse = "".join(f"data: {json.dumps(frame, ensure_ascii=False)}\n\n" for frame in frames) + "data: [DONE]\n\n"
         return httpx.Response(200, content=sse.encode(), headers={"content-type": "text/event-stream"})
 
     def make_conversation(handler: object) -> Conversation:
-        client = Model("deepseek", model="deepseek-chat", base_url=HttpUrl("https://example.test/v1"),
-                       api_key=SecretStr("fake-key"), reasoning_effort="high", client=handler)
+        client = Model("deepseek", model=model, base_url=HttpUrl("https://example.test/v1"),
+                       api_key=SecretStr("fake-key"), reasoning_effort=effort, client=handler)
         return Conversation(Agent(client.model, tools=[double], checkpointer=InMemorySaver()),
                             {"configurable": {"thread_id": "litellm-compat"}},
                             skill_roots=[], event_handler=received.append)

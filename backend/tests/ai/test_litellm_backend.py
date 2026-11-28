@@ -3,6 +3,7 @@
 import asyncio
 from collections.abc import Callable
 import json
+from typing import cast
 
 import httpx
 import pytest
@@ -57,6 +58,49 @@ def test_deepseek_uses_litellm_translation_and_preserves_reasoning(
     assert body["model"] == "deepseek-chat"
     assert body["thinking"] == {"type": "disabled" if effort == "none" else "enabled"}
     assert "reasoning_effort" not in body  # 由 LiteLLM 自身转换，不再要求等同旧适配的请求体。
+
+
+@pytest.mark.parametrize(("asynchronous", "model"), [(False, "deepseek-v4-flash"), (True, "deepseek-flash")])
+@pytest.mark.parametrize("effort", ["none", "low", "high", "max"])
+def test_deepseek_flash_sends_selected_thinking_level(asynchronous: bool, model: str, effort: str) -> None:
+    """拦截真实 SDK 的 HTTP 请求，确认选中的强度没有被降成单纯的思考开关。"""
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={
+            "id": "fake-reply", "object": "chat.completion", "created": 1, "model": model,
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "答案"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5},
+        })
+
+    def make_model(handler: HTTPHandler | AsyncHTTPHandler) -> Model:
+        return Model("deepseek", model=model, base_url=HttpUrl("https://example.test/v1"),
+                     api_key=SecretStr("fake-key"), reasoning_effort=effort, client=handler,
+                     extra_body={"user": "flash-regression"})
+
+    async def execute() -> None:
+        handler = AsyncHTTPHandler(transport=httpx.MockTransport(respond))
+        try:
+            assert (await make_model(handler).model.ainvoke("问题")).content == "答案"
+        finally:
+            await handler.client.aclose()
+
+    if asynchronous:
+        asyncio.run(execute())
+    else:
+        with httpx.Client(transport=httpx.MockTransport(respond)) as transport:
+            assert make_model(HTTPHandler(client=transport)).model.invoke("问题").content == "答案"
+
+    assert len(requests) == 1 and requests[0].url.path == "/v1/chat/completions"
+    body = cast(dict[str, object], json.loads(requests[0].content))
+    assert body["model"] == model and body["user"] == "flash-regression"
+    if effort == "none":
+        assert body["thinking"] == {"type": "disabled"}
+        assert "reasoning_effort" not in body
+    else:
+        assert body["thinking"] == {"type": "enabled"}
+        assert body.get("reasoning_effort") == effort
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
