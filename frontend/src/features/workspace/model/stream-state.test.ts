@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { RunEvent } from "@/lib/omt-api/contracts";
 import { applyRunEvent } from "./stream-state";
+import { usageFromHistory, withContextWindow } from "./usage";
 import type { RunState } from "./types";
 import { runEvents, terminal } from "../../../../tests/fixtures";
 
@@ -22,6 +23,19 @@ export const interleaved: RunEvent[] = [
 const initial: RunState = { phase: "sending", message: "问题", items: [], receiving: true };
 
 describe("run event projection", () => {
+  it("用量快照替换而非累加，不创建消息或工具卡片，重复终态也不重复计数", () => {
+    const usage = withContextWindow({ ...usageFromHistory([]), total_tokens: 27200, context_tokens: 27200 }, 272000);
+    const update: RunEvent = { ...common, seq: 3, type: "usage.updated", data: { usage } };
+    const updated = applyRunEvent(initial, update);
+    expect(updated.usage).toEqual(usage);
+    expect(updated.items).toEqual([]);
+    expect(updated.phase).toBe("sending");
+    const end: RunEvent = { ...terminal, type: "run.completed", data: { status: "completed", answer: "完成", warnings: [], usage } };
+    expect(applyRunEvent(applyRunEvent(updated, end), end).usage?.total_tokens).toBe(27200);
+    const failed: RunEvent = { ...terminal, type: "run.failed", data: { code: "run_failed", message: "失败",
+      usage: { ...usage, usage_complete: false, context_tokens: null, context_used_percent: null, context_remaining_tokens: null } } };
+    expect(applyRunEvent(updated, failed).usage?.usage_complete).toBe(false);
+  });
   it("separates assistant messages/reasoning and parallel tools sharing a name", () => {
     const before = interleaved.slice(0, 10).reduce(applyRunEvent, initial);
     expect(before.phase).toBe("sending"); // assistant.completed/tool.failed cannot complete a run

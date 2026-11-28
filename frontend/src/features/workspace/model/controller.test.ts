@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { MessageResponse, OmtClient, TerminalEvent } from "@/lib/omt-api/contracts";
 import { ApiError } from "@/lib/omt-api/errors";
 import { WorkspaceController } from "./controller";
+import { usageFromHistory, withContextWindow } from "./usage";
 import { runtime, terminal, runEvents, deferred, history, sessionA, sessionB } from "../../../../tests/fixtures";
 
 function setup() {
@@ -30,6 +31,24 @@ async function connected() {
   return result;
 }
 describe("workspace controller", () => {
+  it("流开始时对齐比旧 runtime 更新的容量，用量始终归属于原会话", async () => {
+    const { api, controller } = await connected();
+    const baseline = withContextWindow(usageFromHistory([]), 544000);
+    const usage = withContextWindow({ ...baseline, total_tokens: 27200, context_tokens: 27200 }, 544000);
+    api.getMessages.mockResolvedValue([]);
+    api.streamRun.mockImplementation(async (_id, _message, onEvent) => {
+      onEvent({ ...terminal, seq: 1, type: "run.started", data: { thinking: runtime.thinking, usage: baseline } });
+      onEvent({ ...terminal, seq: 2, type: "usage.updated", data: { usage } });
+      controller.selectSession(sessionB.session_id);
+      expect(controller.getSnapshot().runs[sessionA.session_id].usage).toEqual(usage);
+      expect(controller.getSnapshot().runs[sessionB.session_id]?.usage).toBeUndefined();
+      expect(controller.runtime.getSnapshot().runtime?.usage?.context_window).toBe(544000);
+      return { ...terminal, type: "run.completed", seq: 3, data: { status: "completed", answer: "完成", warnings: [], usage } };
+    });
+    expect(await controller.send(sessionA.session_id, "发送")).toBe(true);
+    expect(controller.getSnapshot().selectedId).toBe(sessionB.session_id);
+    expect(controller.runtime.getSnapshot().runtime?.usage?.total_tokens).toBe(0);
+  });
   it("connects without credentials and clears cached state on disconnect", async () => {
     const { controller } = await connected();
     expect(controller.getSnapshot().connection).toBe("connected");

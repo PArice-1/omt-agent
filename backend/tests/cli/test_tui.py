@@ -65,6 +65,78 @@ async def idle(pilot: Pilot[None], app: OmtApp) -> None:
     await until(pilot, lambda: not app.busy)
 
 
+@pytest.mark.parametrize("plain", [False, True])
+@pytest.mark.usefixtures("cli_db")
+def test_usage_below_input_initial_turn_restore_and_new_chat(
+    plain: bool, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """真实终端控件/逐行底栏使用同一统计，新会话无需模型请求即显示容量。"""
+    from pydantic import HttpUrl
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.input import create_pipe_input
+    from prompt_toolkit.output import DummyOutput
+    from omt.cli.app import run_cli
+    from omt.core.bootstrap import SessionRuntime
+
+    monkeypatch.setattr("omt.ai.litellm_backend.get_context_window", Mock(return_value=272000))
+    model = LocalModel(responses=[AIMessage(content="回答", usage_metadata={
+        "input_tokens": 25000, "output_tokens": 2200, "total_tokens": 27200,
+    })])
+
+    @asynccontextmanager
+    async def factory(options: CliSettings) -> AsyncGenerator[SessionRuntime]:
+        """只组装本地假模型及临时 SQLite，模型元数据由显式替身提供。"""
+        async with AsyncSqliteSaver.from_conn_string(str(options.db_path)) as saver:
+            manager = SessionManager(Agent(model, checkpointer=saver), SessionStore(options.db_path),
+                                     workspace_path=options.workspace_path, system_prompt="规则", skill_roots=[])
+            runtime = SessionRuntime(manager, settings.Settings(defaultProvider="openai", defaultModel="test-window"),
+                                     settings.ModelDefinition(id="test-window", baseUrl=HttpUrl("https://example.test/v1")), saver, [])
+            try:
+                yield runtime
+            finally:
+                await runtime.aclose()
+
+    async def execute() -> None:
+        if plain:
+            labels: list[str] = []
+            with create_pipe_input() as pipe:
+                terminal = PromptSession[str](input=pipe, output=DummyOutput())
+
+                async def read(_terminal: PromptSession[str] | None = None) -> str:
+                    """观察真正传给 PromptSession 的底栏，不占用用户终端。"""
+                    toolbar = terminal.bottom_toolbar
+                    assert callable(toolbar)
+                    labels.append(str(toolbar()))
+                    return "提问" if len(labels) == 1 else "/exit"
+
+                monkeypatch.setattr("omt.cli.app.read_input", read)
+                await run_cli(manager_factory=factory, terminal=terminal)
+            assert labels == ["0 token 0%/272k", "27.2k token 10%/272k"]
+        else:
+            app = OmtApp(runtime_factory=factory)
+            async with app.run_test(size=(80, 26)) as pilot:
+                await idle(pilot, app)
+                assert str(app.usage_status.content) == "0 token 0%/272k"
+                assert app.usage_status.region.y >= app.composer.region.bottom
+                _ = app.composer.insert("提问")
+                await pilot.press("enter")
+                await idle(pilot, app)
+                assert str(app.usage_status.content) == "27.2k token 10%/272k"
+                assert app.current is not None
+                identifier = app.current.thread_id
+                await pilot.press("ctrl+n")
+                await idle(pilot, app)
+                assert str(app.usage_status.content) == "0 token 0%/272k"
+                assert app.start_operation(lambda: app.restore_session(identifier))
+                await idle(pilot, app)
+                assert str(app.usage_status.content) == "27.2k token 10%/272k"
+                await pilot.resize_terminal(44, 16)
+                await pilot.pause()
+                assert app.usage_status.region.bottom <= app.size.height
+                await pilot.press("ctrl+q")
+    asyncio.run(execute())
+
+
 def test_missing_configuration_keyboard_help_and_cancel_leave_no_files() -> None:
     async def execute() -> None:
         app = OmtApp()

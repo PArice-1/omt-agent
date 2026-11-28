@@ -13,6 +13,7 @@ from starlette.types import Message, Receive, Scope, Send
 
 from omt.core.events import RunEvent
 from omt.core.session_manager import SessionError, SessionManager
+from omt.core.usage import UsageSnapshot
 
 from .schemas import StreamEvent, ThinkingResponse
 from .settings import ApiSettings
@@ -35,13 +36,14 @@ class RunStream:
 
     def __init__(
         self, manager: SessionManager, session_id: str, message: str,
-        settings: ApiSettings, thinking: ThinkingResponse | None,
+        settings: ApiSettings, thinking: ThinkingResponse | None, context_window: int | None = None,
     ) -> None:
         self.manager: SessionManager = manager
         self.session_id: str = session_id
         self.message: str = message
         self.settings: ApiSettings = settings
         self.thinking: ThinkingResponse | None = thinking
+        self.usage: UsageSnapshot = UsageSnapshot().with_window(context_window)
         self.run_id: str = ""
         self._seq: int = 0
         self._queue: asyncio.Queue[bytes | None] = asyncio.Queue()
@@ -82,10 +84,16 @@ class RunStream:
     def _started(self, run_id: str) -> None:
         self.run_id = run_id
         snapshot: JsonValue = None if self.thinking is None else _json(self.thinking.model_dump())
-        self._enqueue(self._encode("run.started", {"thinking": snapshot}))
+        self._enqueue(self._encode("run.started", {"thinking": snapshot, "usage": _json(self.usage.model_dump())}))
         self._accepted.set_result(None)
 
     def _event(self, event: RunEvent) -> None:
+        # 基线在接纳前仅缓存，接纳后每次模型结束发布快照（不是需要前端累加的增量）。
+        if event.kind == "usage.updated" and isinstance(event.data, UsageSnapshot):
+            self.usage = event.data.with_window(self.usage.context_window)
+            if self.run_id and self._failure is None:
+                self._enqueue(self._encode("usage.updated", {"usage": _json(self.usage.model_dump())}))
+            return
         # 初始化诊断和 core 的异常原文不直接暴露到网络；运行终态由 Manager 结果生成。
         if not self.run_id or self._failure is not None or event.kind in {"skills.diagnostic", "run.failed"}:
             return
@@ -115,16 +123,20 @@ class RunStream:
             self._abort("invalid_stream_data")
 
     def _end(self, kind: str, data: dict[str, JsonValue]) -> None:
+        # 失败/取消也保留已经报告的消耗；断流丢失的用量不能补造成精确账单。
+        data["usage"] = _json(self.usage.model_dump())
         encoded = self._encode(kind, data)
         if len(encoded) > self.settings.stream_buffer_bytes:
             encoded = self._encode("run.failed", {"code": "stream_event_too_large",
-                                                  "message": "终态内容超过传输上限，请检查历史，勿自动重试"})
+                                                  "message": "终态内容超过传输上限，请检查历史，勿自动重试",
+                                                  "usage": _json(self.usage.model_dump())})
         self._terminal = encoded
 
     async def _run(self) -> None:
         try:
             result = await self.manager.run(self.session_id, self.message, event_handler=self._event,
                                             on_started=self._started)
+            self.usage = result.usage.with_window(self.usage.context_window)
             self._end("run.completed", {"status": "completed", "answer": result.answer,
                                         "warnings": list(result.warnings)})
         except asyncio.CancelledError:

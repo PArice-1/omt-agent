@@ -13,6 +13,7 @@ from pydantic import SecretStr
 from omt.core import bootstrap, model_configuration as configuration
 from omt.core.session_manager import SessionError, SessionManager
 from omt.core.store import initialize_session_database
+from omt.core.usage import UsageSnapshot
 
 from .schemas import (
     LoginConfirmResponse, LoginPreviewResponse, ModelResponse, OperationError,
@@ -107,6 +108,11 @@ class ApiRuntime:
                                 reasoning_effort=state.reasoning_effort,
                                 available_levels=list(state.available_levels))
 
+    def usage(self) -> UsageSnapshot:
+        """连接与切模型时提供新会话基线；历史/流快照另按所选会话统计。"""
+        window = self._runtime.context_window if self._runtime is not None else None
+        return UsageSnapshot().with_window(window)
+
     def status(self) -> RuntimeResponse:
         manager = self._runtime.manager if self._runtime is not None else None
         configured = configuration.check_model_configuration().ready
@@ -115,7 +121,7 @@ class ApiRuntime:
             mutable=True, changing=self._changing,
             busy=self._changing or bool(self._leases) or (manager.busy if manager is not None else False),
             running=manager.running if manager is not None else 0,
-            thinking=self.thinking(), message=self._message,
+            thinking=self.thinking(), message=self._message, usage=self.usage(),
         )
 
     def _ensure_open(self) -> None:

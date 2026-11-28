@@ -60,6 +60,7 @@ ToolOutput > Contents {
     background: transparent;
 }
 #dock { height: auto; }
+#usage-status { height: 1; color: $text-muted; padding: 0 1; }
 #activity {
     display: none;
     height: 1;

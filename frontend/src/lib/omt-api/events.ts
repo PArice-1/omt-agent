@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { thinkingSchema } from "./schemas";
+import { thinkingSchema, usageSchema } from "./schemas";
 
 export const eventEnvelopeSchema = z.object({
   seq: z.number().int().positive(), type: z.string(),
@@ -10,9 +10,10 @@ export const eventEnvelopeSchema = z.object({
 const base = eventEnvelopeSchema.omit({ type: true, data: true });
 const assistant = base.extend({ message_id: z.string().min(1), role: z.literal("assistant") });
 const tool = base.extend({ tool_call_id: z.string().min(1), role: z.literal("tool") });
-const failure = z.object({ code: z.string(), message: z.string() });
+const failure = z.object({ code: z.string(), message: z.string(), usage: usageSchema.optional() });
 export const runEventSchema = z.discriminatedUnion("type", [
-  base.extend({ type: z.literal("run.started"), data: z.object({ thinking: thinkingSchema.nullable() }) }),
+  base.extend({ type: z.literal("run.started"), data: z.object({ thinking: thinkingSchema.nullable(), usage: usageSchema.optional() }) }),
+  base.extend({ type: z.literal("usage.updated"), data: z.object({ usage: usageSchema }) }),
   assistant.extend({ type: z.literal("assistant.started"), data: z.object({}) }),
   assistant.extend({ type: z.literal("assistant.text.delta"), data: z.object({ delta: z.string() }) }),
   assistant.extend({ type: z.literal("assistant.reasoning.delta"), data: z.object({ delta: z.string() }) }),
@@ -27,7 +28,7 @@ export const runEventSchema = z.discriminatedUnion("type", [
     z.object({ name: z.string(), text: z.string(), status: z.literal("error") }),
     z.object({ name: z.string(), code: z.literal("tool_failed"), message: z.string() }),
   ]) }),
-  base.extend({ type: z.literal("run.completed"), data: z.object({ status: z.literal("completed"), answer: z.string(), warnings: z.array(z.string()) }) }),
+  base.extend({ type: z.literal("run.completed"), data: z.object({ status: z.literal("completed"), answer: z.string(), warnings: z.array(z.string()), usage: usageSchema.optional() }) }),
   base.extend({ type: z.literal("run.failed"), data: failure }),
   base.extend({ type: z.literal("run.cancelled"), data: failure.extend({ code: z.literal("run_cancelled") }) }),
 ]);

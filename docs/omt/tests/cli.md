@@ -14,6 +14,8 @@
 
 ## 入口与配置场景
 
+逐行输入下方使用 PromptSession.bottom_toolbar 展示用量，初始化容量与模型结束更新见[Token 用量专项](usage.md)。内存终端 fixture 返回可设置底栏的 Mock；真实信号测试仍仅作用于测试子进程。
+
 | 场景 | 输入 / 前置条件 | 预期结果 | 对应测试 |
 | --- | --- | --- | --- |
 | 不创建空记录 | /exit、/quit、大写与首尾空白、EOF、输入 KeyboardInterrupt | 输出结束；没有索引，不发送退出文本给模型 | test_cli_exit_does_not_create_empty_session |

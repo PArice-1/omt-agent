@@ -39,6 +39,7 @@ core 是与入口无关的共用核心，不限定于编码场景。核心不导
 | [core/configuration.py](../../backend/src/omt/core/configuration.py) | 共用会话选项、类型化 MCP 连接配置；入口各自继承并指定前缀 | HTTP 令牌、读取模型认证 |
 | [core/session_manager.py](../../backend/src/omt/core/session_manager.py) | 按 ID 操作、目录归属、最新历史、互斥/容量、失败和关闭清理 | 跨进程锁、回滚、全局当前会话 |
 | [core/conversation.py](../../backend/src/omt/core/conversation.py) | 初始提示词/Skills、一轮同步/异步执行、历史加载和终态校验、过程事件 | 索引、模型配置、终端显示 |
+| [core/usage.py](../../backend/src/omt/core/usage.py) | 从模型用量/历史重建会话累计及最近上下文快照，缺失保留未知 | 服务商计费账本、联网查询容量、下一次请求预估 |
 | [core/events.py](../../backend/src/omt/core/events.py) | RunEvent 数据与 EventHandler 类型 | 渲染、SSE、持久化 |
 | [core/store.py](../../backend/src/omt/core/store.py) | 已有索引读写；显式初始化缺失数据库 | 消息、隐式建表、已有库迁移、检查点恢复 |
 | [core/settings.py](../../backend/src/omt/core/settings.py) | 模型配置、认证与目录读取及校验 | 会话编排、OAuth |
@@ -63,7 +64,7 @@ omt 和模块入口均调用 omt.cli.app:main；默认或 --tui 调用 OmtApp.ru
 
 CLI 和 HTTP 默认都通过 `bootstrap.open_session_runtime(options)`，由 SessionRuntime 持有可替换的 Manager。HTTP 外层 ApiRuntime 管理未配置/未就绪状态、限时限量的内存配置预览和请求借用计数；只在显式确认首次配置后调用 initialize_session_database。两者共用配置解析、预建索引校验、提示词、模型与 Agent 组装：
 1. 确认配置工作目录是实际 cwd，且数据库文件和 sessions 表预先存在；不会 chdir、建索引表或迁移。
-2. 读取包内基础提示词，再解析模型设置/认证/目录，组装模型、内置工具和选定的 MCP。
+2. 读取包内基础提示词，再解析模型设置/认证/目录，组装模型、内置工具和选定的 MCP。MCP 按服务独立并发发现；初始化或发现失败只记录不含异常原文的警告并跳过该服务，不阻止 CLI/API 运行环境启动，也不影响其他可用工具。取消仍正常传播；MCP 配置格式校验及模型、数据库错误不在此降级范围。
 3. 持有一个 AsyncSqliteSaver，创建 Store 与 Manager。
 4. 退出先关闭当前 Manager，取消并等待活跃历史/运行操作，再关闭 Saver 连接。
 
@@ -80,6 +81,7 @@ SessionSettings 共享 db_path、workspace_path、max_concurrent_runs、skill_ro
 - 主视图移除 Header/Footer/工具栏大按钮，以紧凑对话、底部伸缩输入框和单行状态为主；样式放在 `tui.tcss`，使用 Textual 主题及现有组件，不改变 core。
 - F2 登录/换模型，F3 用稳定 ID 选择恢复，F4 推理等级，Ctrl-N 新对话；Enter 发送、Ctrl-J 换行。Esc 优先收起指令提示，否则取消操作或弹窗；Ctrl-Q/Ctrl-C 退出并等待清理。普通输入复用 validate_message；`/help` 提供操作指南。
 - `completion.py` 的命令元数据/筛选及 CommandMenu 只负责提示，Composer 保持编辑焦点，↑↓/Tab/Enter 选择、补全/执行，仍由 OmtApp 调用 core。`/model` 是 TUI 的 `/login` 别名；推理参数只读当前 Runtime.thinking.available_levels，无配置/网络副作用。多行和非法参数不自动改写。
+- 输入框下方新增用量行，启动即由 Runtime 的 LiteLLM 本地容量显示 `0 token 0%/272k`；每次模型结束更新会话累计消耗与最近请求的上下文已使用比例。新建归零，恢复从检查点 usage 重建，切模型只重算容量/比例。未知容量或缺失统计明确展示，不虚报精确零；plain 使用 PromptSession.bottom_toolbar，规则一致。
 - Composer 对已接纳普通输入保留最多 50 条内存历史及未发送草稿，不记录命令或密码、不写 SQLite；首/末行方向键回看，其他光标/选择编辑照常。输入框按软换行后的实际高度在 1～6 行间伸缩；收起菜单或尺寸变化不会丢失文本。
 - TUI `/resume` 打开选择面板，不保留逐行的编号或裸词别名；未知斜杠命令提示而非执行。命令兼容差异见[使用说明](cli.md#默认-tui)，不影响 SQLite、JSON 或 Manager 接口。
 - RunEvent 回调只同步投递 Textual Message；UI 异步增量渲染 Markdown/折叠工具输出，不在 core 依赖或调用 Textual。工具屏幕缓冲最多保留末尾 16000 字符，数据库历史不裁剪；向上回看不强制滚到底部。
@@ -103,6 +105,8 @@ CLI 配置和示例见[使用说明](cli.md)，交互证据见[CLI 测试](tests
 ### 基础规则与 HTTP
 
 load_system_prompt() 使用 importlib.resources 读取包内 prompts/system.md，与 cwd 无关；资源缺失、非 UTF-8 或纯空白在模型初始化前失败。bootstrap 每次生命周期读取一次，Manager 只在空会话首轮传入 Conversation，与 Skills 目录合并成单条 SystemMessage；不要同时传给 Agent.system_prompt。恢复已有消息不替换原系统规则，也不重新扫描 Skills。
+
+HTTP 的 runtime 响应提供零用量/当前模型窗口基线；历史助手消息安全投影单次 `usage` 计数。SSE 的 run.started 对齐所选会话历史，每次模型结束发送 `usage.updated` 累计快照（包含纯工具请求），运行终态附带最近快照。上下文使用最近请求输入加输出，而非累计消耗；缺失/取消不伪造精确统计，不另建数据库或联网请求容量。字段及格式的唯一规则见[API 契约](frontend-api.md#token-消耗与上下文快照)，测试见[用量专项](tests/usage.md)。
 
 HTTP 显式创建即登记，允许空会话；历史响应投影用户/助手/工具正文、可选消息 ID、reasoning 和工具关联，不暴露系统提示词、artifact、完整模型元数据或检查点。JSON 调用默认不绑定过程回调；SSE 通过同一个 Manager.run 安装网络投影回调，不重新编排模型或工具。reasoning 保留在原始检查点消息里，查询时优先标准内容块，旧 DeepSeek 字段只回退、不重复拼接。当前 HTTP 免认证，仅适合可信本机使用；后端及前端代理均不应向不可信网络开放。完整路由、认证现状和错误见[HTTP 使用说明](api.md)。
 

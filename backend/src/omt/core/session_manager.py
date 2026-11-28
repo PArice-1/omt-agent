@@ -4,7 +4,7 @@ import asyncio
 import sqlite3
 from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from uuid import uuid4
 
@@ -14,7 +14,8 @@ from langchain_core.runnables import RunnableConfig
 from omt.agent.agent import Agent
 
 from .conversation import Conversation
-from .events import EventHandler
+from .events import EventHandler, RunEvent
+from .usage import UsageSnapshot, usage_from_messages
 from .store import SessionRecord, SessionStore
 
 
@@ -33,6 +34,7 @@ class RunResult:
     run_id: str
     answer: str
     warnings: tuple[str, ...] = ()
+    usage: UsageSnapshot = field(default_factory=UsageSnapshot)
 
 
 @dataclass(frozen=True)
@@ -210,6 +212,9 @@ class SessionManager:
             conversation = await self._load(session_id, event_handler=event_handler)
             run_id = str(uuid4())
             try:
+                # 在接纳通知前交付历史基线，Adapter 可在 run.started 中原子对齐用量。
+                if event_handler is not None:
+                    event_handler(RunEvent("usage.updated", data=usage_from_messages(conversation.messages)))
                 if on_started is not None:
                     on_started(run_id)
                 answer = await conversation.arun(message)
@@ -224,7 +229,7 @@ class SessionManager:
                 self._tainted.add(session_id)
                 raise SessionError("run_failed", "本轮执行失败，可能已有工具副作用，请检查会话", run_id=run_id) from exc
             _, warnings = await self._touch(session_id)
-            return RunResult(session_id, run_id, answer, warnings)
+            return RunResult(session_id, run_id, answer, warnings, usage_from_messages(conversation.messages))
 
     async def rebuild(self, agent: Agent) -> "SessionManager":
         """空闲时用新 agent 创建继任 Manager，成功后关闭当前实例。

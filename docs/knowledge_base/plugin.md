@@ -43,7 +43,7 @@ python3 scripts/knowledge-base-config.py --source /absolute/path/to/docs \
   --db-path /absolute/path/to/storage --build-on-start
 ```
 
-关闭时将对应变量设为 `{}` 或取消设置。两个入口不互相继承 MCP 配置，安装插件不会使其他入口自动连接。显式配置错误或插件不可用仍正常报告失败，不假装检索成功。
+关闭时将对应变量设为 `{}` 或取消设置。两个入口不互相继承 MCP 配置，安装插件不会使其他入口自动连接。显式配置格式错误仍会报告；插件启动、连接或工具发现失败时，backend 仅记录警告并跳过该服务，继续使用内置工具和其他可用 MCP，不阻止 CLI/API 运行环境启动。被跳过的插件不提供检索工具，不会假装检索成功；恢复插件后需重启 backend 重新发现。
 
 ## 独立使用与进程约束
 

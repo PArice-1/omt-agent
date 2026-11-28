@@ -2,6 +2,8 @@
 import { useRef, type ReactNode } from "react";
 import { ArrowUp, LoaderCircle, Square } from "lucide-react";
 import { validateMessage } from "../model/format";
+import type { UsageSnapshot } from "@/lib/omt-api/contracts";
+import { formatUsage } from "../model/usage";
 
 interface Props {
   value: string;
@@ -14,8 +16,9 @@ interface Props {
   hint: string;
   controls?: ReactNode;
   settingsFeedback?: ReactNode;
+  usage?: UsageSnapshot;
 }
-export function Composer({ value, onChange, onSend, disabled, sending, stopping, onStop, hint, controls, settingsFeedback }: Props) {
+export function Composer({ value, onChange, onSend, disabled, sending, stopping, onStop, hint, controls, settingsFeedback, usage }: Props) {
   const composing = useRef(false);
   const validation = value ? validateMessage(value) : null;
   return <div className="composer-region">
@@ -31,6 +34,7 @@ export function Composer({ value, onChange, onSend, disabled, sending, stopping,
         </div>
       </div>
     </form>
+    {usage && <p className="composer-usage" aria-label="Token 消耗与上下文占用" title="当前会话累计 token；百分比为最近一次模型请求的输入加输出占用，不含草稿。≥ 表示部分调用未报告用量；-- 表示未知。">{formatUsage(usage)}</p>}
     {settingsFeedback}
     <p className="composer-disclaimer"><span className="tiny-dot" />{hint} <span className="disclaimer-separator">·</span> 停止接收后会尝试终止；不保证工具立即停止或副作用回滚</p>
   </div>;

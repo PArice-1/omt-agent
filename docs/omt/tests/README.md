@@ -8,6 +8,7 @@
 
 | 说明 | 对应测试 |
 | --- | --- |
+| [Token 消耗与上下文展示](usage.md) | [test_usage.py](../../../backend/tests/core/test_usage.py)、AI 桥接/容量、HTTP/SSE 与 CLI/TUI 用量专项及前端测试 |
 | [模型初始化与 SDK 能力](ai-models.md) | [test_model_capabilities.py](../../../backend/tests/ai/test_model_capabilities.py)、[test_ai.py](../../../backend/tests/ai/test_ai.py)、[test_models_manager.py](../../../backend/tests/ai/test_models_manager.py)、[test_litellm_backend.py](../../../backend/tests/ai/test_litellm_backend.py)、[test_litellm_stream.py](../../../backend/tests/ai/test_litellm_stream.py)、[test_model_catalog.py](../../../backend/tests/ai/test_model_catalog.py) |
 | [Ollama 本地模型适配](ollama.md) | [test_ollama.py](../../../backend/tests/ai/test_ollama.py) |
 | [Agent 与同步/异步 v3 流](agent.md) | [test_agent.py](../../../backend/tests/test_agent.py)、[test_agent_stream.py](../../../backend/tests/test_agent_stream.py)、[test_agent_async.py](../../../backend/tests/test_agent_async.py) |
@@ -22,7 +23,7 @@
 | [核心 reasoning 与快捷模型目录](reasoning-and-model-choices.md) | [test_reasoning.py](../../../backend/tests/core/test_reasoning.py)、[test_model_choices.py](../../../backend/tests/core/test_model_choices.py) |
 | [SQLite 会话索引](store.md) | [test_store.py](../../../backend/tests/core/test_store.py) |
 | [CLI /resume 会话选择与恢复](resume.md) | [test_resume.py](../../../backend/tests/cli/test_resume.py) |
-| [模型配置与共用组装](session-and-config.md) | [test_bootstrap.py](../../../backend/tests/core/test_bootstrap.py)、[test_settings.py](../../../backend/tests/core/test_settings.py)、[test_configuration_files.py](../../../backend/tests/core/test_configuration_files.py) |
+| [模型配置与共用组装](session-and-config.md) | [test_bootstrap.py](../../../backend/tests/core/test_bootstrap.py)、[test_mcp.py](../../../backend/tests/core/test_mcp.py)、[test_settings.py](../../../backend/tests/core/test_settings.py)、[test_configuration_files.py](../../../backend/tests/core/test_configuration_files.py) |
 | [工具、注册与文件查找](tools.md) | [test_tools_manager.py](../../../backend/tests/core/test_tools_manager.py)、[test_read.py](../../../backend/tests/core/tools/test_read.py)、[test_edit.py](../../../backend/tests/core/tools/test_edit.py)、[test_write.py](../../../backend/tests/core/tools/test_write.py)、[test_bash.py](../../../backend/tests/core/tools/test_bash.py)、[test_find_files.py](../../../backend/tests/core/utils/test_find_files.py) |
 | [内置系统提示词](prompts.md) | [test_prompts.py](../../../backend/tests/core/test_prompts.py) |
 | [Skills 发现与提示词](skills.md) | [test_skills.py](../../../backend/tests/core/test_skills.py) |

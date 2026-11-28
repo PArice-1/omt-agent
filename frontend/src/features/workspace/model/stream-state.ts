@@ -3,7 +3,10 @@ import type { RunState, StreamItem } from "./types";
 
 /** Pure projection: all calls belong to one session/run; IDs, never names, are keys. */
 export function applyRunEvent(run: RunState, event: RunEvent): RunState {
-  const next = { ...run, runId: event.run_id };
+  // 用量是会话累计快照，收到同一个终态两次也不能重复累加。
+  const usage = "usage" in event.data ? event.data.usage : undefined;
+  const next = { ...run, runId: event.run_id, ...(usage ? { usage } : {}) };
+  if (event.type === "usage.updated") return next;
   const items = [...(run.items ?? [])];
   if (event.type === "run.started") return { ...next, thinking: event.data.thinking };
   if (event.type === "run.completed") {

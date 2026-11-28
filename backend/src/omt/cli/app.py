@@ -12,8 +12,10 @@ from prompt_toolkit import PromptSession
 
 from omt.core import model_configuration
 from omt.core.bootstrap import SessionRuntime, open_session_runtime
+from omt.core.events import RunEvent
 from omt.core.session_manager import SessionError, SessionManager
 from omt.core.store import initialize_session_database
+from omt.core.usage import UsageSnapshot, format_usage
 
 from .commands import CliState, handle_command, handle_thinking_command
 from .login import login
@@ -55,6 +57,20 @@ async def run_cli(
         else:
             active = await stack.enter_async_context(factory(options))
         state = CliState()
+
+        def usage_label() -> str:
+            """每次重绘读取当前模型容量，启动/恢复/切模型无需先执行请求。"""
+            window = active.context_window if isinstance(active, SessionRuntime) else None
+            return format_usage(state.usage.with_window(window))
+
+        def receive_event(event: RunEvent) -> None:
+            """用量只更新底栏，其余过程沿用逐行渲染，不重复打印最终回答。"""
+            if event.kind == "usage.updated" and isinstance(event.data, UsageSnapshot):
+                state.usage = event.data
+            else:
+                print_event(event)
+
+        terminal.bottom_toolbar = usage_label
         print("输入 /login 添加模型，/resume 查看会话，/thinking 查看或修改推理强度，/exit 或 /quit 退出，Ctrl-C 或 Ctrl-D 结束会话。")
         if isinstance(active, SessionRuntime):
             display_thinking(active.thinking)
@@ -114,7 +130,7 @@ async def run_cli(
                     print("[会话存储失败] 本轮尚未执行，可重新尝试登记。")
                     continue
             try:
-                result = await manager.run(state.current.thread_id, text, event_handler=print_event)
+                result = await manager.run(state.current.thread_id, text, event_handler=receive_event)
             except sqlite3.Error:
                 print("[会话存储失败] 暂时无法加载会话，本轮尚未执行。")
             except SessionError as exc:
@@ -122,6 +138,7 @@ async def run_cli(
                 print("可切换其他会话，或退出后检查恢复；未完成会话不会自动重跑。")
             else:
                 # 回答已经通过事件显示，只展示非致命警告，不重复打印 answer。
+                state.usage = result.usage
                 print_warnings(result.warnings)
 
 

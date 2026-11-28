@@ -25,6 +25,7 @@ app/page → features/workspace/workspace
 - `src/features/runtime/`：独立的 RuntimeController 管理全进程运行状态、厂商/本地模型目录、配置预览/确认及临时切换；与所选会话无关。密码输入仅在弹窗内短暂保存，提交前清空；Key 只经客户端提交给固定本机上游，不进入控制器快照、浏览器存储或日志。保存结果与启用结果分别展示。`runtime-settings.tsx` 只承载从左侧栏进入的厂商配置弹窗；`runtime-controls.tsx` 提供输入框底部的模型/思考强度下拉及状态反馈，通过 props 回调接入控制器，不直接请求后端。
 - `src/features/workspace/components/`：侧栏、消息、输入框、提示等展示模块，不直接 fetch。
 - `src/features/workspace/workspace.tsx`：React 组合入口，使用 useSyncExternalStore 订阅控制器。
+- `src/features/workspace/model/usage.ts`：按历史助手消息重建已知累计消耗，按最近调用输入加输出计算占用，统一十进制 k/m/b 展示。Composer 在输入框下方展示；初次 runtime 读取即给窗口，旧历史缺失统计显示下界/未知。SSE 用量是快照替换，不是增量求和；切会话隔离，切模型重算容量，不重置累计。
 - `src/features/workspace/model/stream-state.ts`：纯事件投影，以 message_id 累积正文/独立 reasoning，以 tool_call_id 累积工具输入、JSON 进度和终态，不按名称合并。
 - `src/features/workspace/hooks/use-message-scroll.ts`：视图内滚动策略，显式发送时恢复跟随；增量输出、完成及历史同步仅在用户原本接近底部时跟随，不抢走向上阅读位置。
 - `src/lib/server/`：固定上游代理与本机地址校验，仅供 Route Handler 使用。
@@ -48,6 +49,7 @@ Composer 使用 controls/settingsFeedback 插槽组合运行设置，不绑定�
 运行状态为 idle / sending / completed / rejected / needs_attention / failed / cancelled / unknown。这些是内存中的前端观察，不是后端会话字段。receiving 表示同一流请求尚未结束，stopping 表示已请求停止接收；runId、thinking 快照及临时 items 保存在原 session 下。终态已收到但连接仍未清理时也不允许下一轮。
 - 接纳前解析普通 HTTP JSON 错误；接纳后的 run.failed/cancelled 是已确认的失败/取消，保留过程并保护当前会话，不自动重发。工具失败可由模型处理后整轮成功。
 - 停止按钮只 abort 对应请求；显示已停止接收/正在终止，不保证工具立即停止或副作用回滚。未收到运行终态的 EOF、网络/解析异常及主动停止均为 unknown，不宣称确定取消。
+- RuntimeController 在 run.started 时接受本轮 thinking/窗口快照，避免其他客户端切模型后仍使用页面旧 GET 的容量；只对齐展示、不额外联网，不把会话累计写成运行环境的全局账单。
 - RuntimeController 的 pending 对读取/预览/确认/切换同步加锁；本地执行时不允许配置切换。服务端 busy/changing 仅是快照，可显式重新检查，不自动轮询。切换期间保留旧生效值，成功后使用返回的完整 RuntimeResponse；失败/忙碌拒绝不把请求选项当成生效状态。请求 level 与实际 reasoning_effort 分开展示，实际降为 none 时提示回退。
 - 明确的校验、not_found、busy、容量拒绝作为 rejected；run_failed / session_incomplete 需要人工检查。契约外错误（包括意外的 unauthorized）按 unknown 保留执行跟踪，不触发令牌失效或清空状态。
 - 接纳前已知后端 JSON 拒绝（包括存储/内部错误）由 RunAdmissionError 标记，不宣称本轮已执行；session_incomplete 仍需人工检查。代理错误可能掩盖已接纳的执行，与网络/协议异常一样进入 unknown。接纳后失败必须以流内终态区分。
@@ -81,6 +83,7 @@ Composer 使用 controls/settingsFeedback 插槽组合运行设置，不绑定�
 - `tests/e2e/contrast.spec.ts` 检查桌面、窄屏、悬停、连接弹窗、禁用输入及消息/工具/非致命警告的实际计算颜色。它是关键场景回归，不等同于完整的无障碍认证。
 
 ## 测试策略
+- Token 用量、上下文、CLI/API/Web 共用场景与隔离说明见[用量专项](../omt/tests/usage.md)。前端覆盖初始化容量、EOF 前更新、历史刷新不重复计数、新建/切会话/切模型、旧历史未知及数值单位边界；浏览器另检查输入框下方位置和窄屏。
 - Vitest：新增接口的路径/方法/请求体与运行时校验；SSE 单字节跨 UTF-8、半帧/多帧、未知事件/心跳、非法信封、递增序号及无终态断线；纯事件投影覆盖多助手、独立 reasoning、同名工具并行、各类工具结果和最终答案核对。控制器覆盖配置保存/启用分离、切换成功/拒绝/失败/回退、停止及会话隔离。
 - React Testing Library + MSW：真实 API 客户端下的连接、创建、发送、历史替换、异常状态与安全渲染；在 Strict Mode 下验证页面初始化仅探测 runtime/目录、会话接入仍显式触发，且获取预览不会自动确认保存。
 - 代理冒烟测试：核对前后端业务路径均为 `/api/omt/...`，不含版本或重复前缀；实际构建的 Next.js + 随机端口本机 HTTP 替身，验证请求来源、编码 ID、配置 GET/POST/PUT、无认证访问、凭据过滤，以及响应在 EOF 前即交付 SSE、下游中止能关闭上游且无 POST 重试。测试进程结束后关闭服务。

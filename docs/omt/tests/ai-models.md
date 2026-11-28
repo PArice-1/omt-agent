@@ -28,6 +28,8 @@ Ollama 同步/异步协议专项见 [Ollama 测试](ollama.md)。SDK 能力的�
 
 ## SDK 本地思考能力
 
+同一元数据源也提供上下文容量；容量字段优先级/非法值/跨厂商隔离与真实桥接 usage-only chunk 的累计、恢复统计，见[Token 用量专项](usage.md)。
+
 [test_model_capabilities.py](../../../backend/tests/ai/test_model_capabilities.py) 使用真实固定版本的数据验证 gpt-5 的 minimal/low/medium/high，以及 gpt-5.1 的 none/low/medium/high；同时用临时 model_cost 条目验证多厂商、非连续档位不补 medium、未知与明确不支持分离、裸模型名不跨厂商串用。所有路径被 ai 的 DNS/socket 防护约束，不调用 get_model_info 或 Ollama /api/show。
 
 SDK 等级解析依赖内部 resolve_supported_reasoning_efforts，升级依赖须重跑此专项。上层测试显式申请根 tests/conftest.py 的 sdk_reasoning fixture，只替换测试模型元数据，非 autouse，不污染真实 SDK 专项。none 是应用回退项，只有 SDK 明确声明才作为关闭参数发送。

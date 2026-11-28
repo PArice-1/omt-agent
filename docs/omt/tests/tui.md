@@ -12,6 +12,8 @@
 
 ## 场景与可观察预期
 
+输入框下方用量行的初始容量、发送后更新、新建归零、恢复统计和小尺寸可见性，由 `test_usage_below_input_initial_turn_restore_and_new_chat` 覆盖，另见[Token 用量专项](usage.md)。
+
 | 测什么、为什么 | 输入 / 前置条件 | 预期结果 | 对应测试 |
 | --- | --- | --- | --- |
 | 冷启动与帮助，避免向导、空数据和弹窗串扰 | 配置根不存在；F2，再按其他工具快捷键，Esc；输入 `/help`；Ctrl-Q | 停留登录弹窗，不叠层/清除背景消息；取消返回，帮助正常展示；不创建配置或数据库 | test_missing_configuration_keyboard_help_and_cancel_leave_no_files |

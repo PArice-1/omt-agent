@@ -125,6 +125,7 @@ button svg { flex-shrink: 0; }
 .send-button { flex-shrink: 0; display: grid; place-items: center; width: 33px; height: 33px; border: none; border-radius: 10px; background: var(--blue); color: white; }
 .send-button:hover:not(:disabled) { background: var(--blue-deep); }
 .send-button:disabled { background: var(--disabled-surface); color: var(--disabled-ink); opacity: 1; }
+.composer-usage { margin: 8px 2px 0; color: var(--muted); font-size: 12px; line-height: 1.5; font-variant-numeric: tabular-nums; }
 .composer-disclaimer { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 5px; margin: 13px 0 0; font-size: 11px; color: var(--muted); line-height: 1.6; text-align: center; }
 .tiny-dot { height: 4px; width: 4px; border-radius: 50%; background: var(--blue-soft); }
 .disclaimer-separator { padding: 0 3px; color: var(--muted); }

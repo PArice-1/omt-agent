@@ -10,7 +10,7 @@ class RunEvent:
     kind: Literal[
         "assistant.started", "assistant.delta", "assistant.reasoning.delta", "assistant.completed",
         "tool.started", "tool.delta", "tool.completed", "tool.failed", "run.failed",
-        "skills.diagnostic",
+        "skills.diagnostic", "usage.updated",
     ]
     text: str = ""
     tool_name: str = ""

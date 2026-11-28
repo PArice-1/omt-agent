@@ -8,6 +8,7 @@ from typing import Literal
 from omt.core.bootstrap import SessionRuntime
 from omt.core.session_manager import SessionError, SessionManager
 from omt.core.store import SessionRecord
+from omt.core.usage import UsageSnapshot, usage_from_messages
 
 from .terminal import display_history, display_thinking, print_warnings
 
@@ -17,6 +18,7 @@ class CliState:
     """current=None 表示尚未登记的新对话；编号只绑定最近展示的那次列表。"""
 
     current: SessionRecord | None = None
+    usage: UsageSnapshot = field(default_factory=UsageSnapshot)
     started_at: str = field(default_factory=lambda: datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"))
     resume_options: dict[int, str] = field(default_factory=dict)
 
@@ -117,6 +119,7 @@ async def handle_command(
         print("[会话恢复失败] 暂时无法读取会话存储。")
         return "handled"
     state.current = opened.record
+    state.usage = usage_from_messages(opened.messages)
     state.resume_options.clear()
     display_history(opened.messages)
     print_warnings(opened.warnings)
